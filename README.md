@@ -15,7 +15,7 @@ pip install -r requirements.txt    # install any tools
 pip install -e .                   # set up the project in editable mode
 ```
 
-(After this your `python` interpreter will find `sueltas_typography`.)
+(After this your `python` interpreter will find the `io` package.)
 
 
 ## Data preparation
@@ -76,13 +76,32 @@ curated subset.
 More detailed documentation is available in the `docs/` directory (if
 present) or the paper itself.
 
+## Character network module
+
+Additional code from the CharNet repository has been integrated under
+`src/charnet`.  Its dependencies are listed in `requirements.txt`, and
+it is installed automatically when the project is installed via
+`pip install -e .`.
+
+A convenience script `scripts/run_charnet.py` runs the network across a
+folder of documents.  Input should follow the standard layout – each
+document has its own subdirectory containing PNG pages – and the output
+root will mirror that structure:
+
+```sh
+python scripts/run_charnet.py config.yaml input_root/ output_root/
+```
+
+Results for each image are saved as **JSON files** containing
+character bounding boxes and probability scores.
+
 ## DPI / size reporting
 
 A helper module and script can scan a directory of PDFs and/or
 subdirectories of TIFFs and emit a consolidated CSV describing each
 page’s resolution and physical dimensions.  The logic was borrowed from
 an existing standalone script and folded into the package as
-``src/sueltas_typography/dpi_info.py``.
+``src/io/dpi_info.py``
 
 ```sh
 python scripts/compute_dpi.py /path/to/root_dir -o dpi.csv

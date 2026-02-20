@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Script wrapping :mod:`sueltas_typography.dpi_info` to create a CSV."""
+"""Script wrapping :mod:`io.dpi_info` to create a CSV."""
 
 import sys
 import os
@@ -10,7 +10,7 @@ src_path = os.path.join(root, "src")
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
-from sueltas_typography.dpi_info import main
+from io.dpi_info import main
 
 
 def run():

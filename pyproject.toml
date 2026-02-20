@@ -3,9 +3,9 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sueltas-typography"
+name = "io"
 version = "0.1.0"
-description = "Reproducible code for ICDAR paper on typographic analysis of historical documents."
+description = "I/O utilities and helper modules for the ICDAR typography project."
 authors = [
     { name = "Diego" }
 ]
@@ -13,7 +13,15 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
-    "PyMuPDF==1.25.1"
+    "PyMuPDF==1.25.1",
+    "torchvision",
+    "ninja",
+    "yacs",
+    "cython",
+    "matplotlib",
+    "tqdm",
+    "opencv-python",
+    "scikit-image"
 ]
 
 [tool.setuptools.packages.find]

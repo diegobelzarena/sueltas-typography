@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Thin wrapper script that exposes :mod:`sueltas_typography.pdf_utils`.
+"""Thin wrapper script that exposes :mod:`io.pdf_utils`.
 
 Usage:
 
@@ -18,7 +18,7 @@ src_path = os.path.join(root, "src")
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
-from sueltas_typography.pdf_utils import main
+from io.pdf_utils import main
 
 
 def run():
