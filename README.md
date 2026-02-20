@@ -31,14 +31,15 @@ python scripts/convert_pdfs.py /path/to/input_pdfs /path/to/output_images
 
 The converter takes two positional arguments: the directory containing
 PDFs and the destination directory where each PDF will produce its own
-subfolder of PNGs.  Two useful flags are available:
+subfolder of PNGs.  Before extraction it looks for a matching CSV in
+an optional `--dpi-csv-dir`; that CSV should contain DPI estimates for
+each page.  A single DPI value is computed as the median of all
+reported DPIs and rounded to the nearest multiple of 50.  The output
+images are then rescaled so that their metadata declares a uniform
+150 dpi.
 
-* `--metadata` prints each PDF's internal metadata before extraction
-  (author, creation date, etc.).
-* `--info` prints whatever metadata is stored on each page.  This
-  may include physical size, DPI or other attributes depending on the
-  source; the converter merely echoes what the PDF reports rather than
-  guessing values.
+Use the `--dpi-csv-dir` option to point the converter at the folder
+containing those CSV files.
 
 Example:
 
