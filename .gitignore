@@ -1,0 +1,15 @@
+# Ignore data folder contents (raw datasets, CSV outputs, etc.)
+/data/
+
+# Python envs and caches
+__pycache__/
+*.py[cod]
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Byte-compiled / distribution
+build/
+dist/
+*.egg-info/

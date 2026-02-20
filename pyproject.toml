@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sueltas-typography"
+version = "0.1.0"
+description = "Reproducible code for ICDAR paper on typographic analysis of historical documents."
+authors = [
+    { name = "Diego" }
+]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "PyMuPDF==1.25.1"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

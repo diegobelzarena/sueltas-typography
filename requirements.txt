@@ -1,0 +1,6 @@
+# Global requirements for sueltas-typography project
+# add packages used by any of the modules or auxiliary scripts here
+
+PyMuPDF==1.25.1
+pandas>=2.0
+Pillow>=10.0
