@@ -19,13 +19,13 @@ import json
 import torch
 import cv2
 import numpy as np
-from charnet.config import cfg
-from charnet.modeling.model import CharNet
+from src.charnet.charnet.config import cfg
+from src.charnet.charnet.modeling.model import CharNet
 
 
 def save_char_probas(char_bboxes, char_scores, image_id, save_root):
     # same logic as charnet/tools/test_net.py
-    from charnet.modeling.postprocessing import load_char_dict
+    from src.charnet.charnet.modeling.postprocessing import load_char_dict
     char_dict = load_char_dict(cfg.CHAR_DICT_FILE)
     char_ids = char_dict.keys()
     detections = []
