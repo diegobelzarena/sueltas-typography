@@ -93,12 +93,14 @@ def load_char_dict(path, seperator=chr(31)):
 
 
 class WordInstance:
-    def __init__(self, word_bbox, word_bbox_score, text, text_score, char_scores):
+    def __init__(self, word_bbox, word_bbox_score, text, text_score,
+                 char_scores, char_bboxes):
         self.word_bbox = word_bbox
         self.word_bbox_score = word_bbox_score
         self.text = text
         self.text_score = text_score
         self.char_scores = char_scores
+        self.char_bboxes = char_bboxes
 
 
 class OrientedTextPostProcessing(nn.Module):
@@ -304,7 +306,7 @@ class OrientedTextPostProcessing(nn.Module):
             proj = char_vecs.dot(word_vec)
             order = np.argsort(proj)
             text, score = decode(char_scores[order])
-            return text, score, char_scores[order]
+            return text, score, char_scores[order], char_bboxes[order]
 
         word_bbox_scores = word_bboxes[:, 8]
         char_bbox_scores = char_bboxes[:, 8]
@@ -392,7 +394,7 @@ class OrientedTextPostProcessing(nn.Module):
         for idx in range(num_word):
             char_indices = word_chars[idx]
             if len(char_indices) > 0:
-                text, text_score, tmp_char_scores = recog(
+                text, text_score, tmp_char_scores, tmp_char_bboxes = recog(
                     word_bboxes[idx],
                     char_bboxes[char_indices],
                     char_scores[char_indices]
@@ -401,6 +403,7 @@ class OrientedTextPostProcessing(nn.Module):
                     word_bboxes[idx],
                     word_bbox_scores[idx],
                     text, text_score,
-                    tmp_char_scores
+                    tmp_char_scores,
+                    tmp_char_bboxes,
                 ))
         return word_instances

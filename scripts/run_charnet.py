@@ -56,8 +56,8 @@ def _postprocess_and_save(preds, scale_w, scale_h, orig_w, orig_h,
         scale_w, scale_h, orig_w, orig_h,
     )
 
-    _save_json(char_bboxes, char_scores, image_id, save_root,
-               char_dict_file)
+    _save_json(char_bboxes, char_scores, word_instances, image_id,
+               save_root, char_dict_file)
 
 
 # Per-worker cache so we don't rebuild the postprocessor every call.
@@ -87,24 +87,43 @@ def _get_char_dict(char_dict_file):
     return _worker_char_dict
 
 
-def _save_json(char_bboxes, char_scores, image_id, save_root,
-               char_dict_file):
+def _save_json(char_bboxes, char_scores, word_instances, image_id,
+               save_root, char_dict_file):
     char_dict = _get_char_dict(char_dict_file)
     char_ids = list(char_dict.keys())
-    detections = []
-    for char_bbox, char_score in zip(char_bboxes, char_scores):
-        detection = {}
+
+    def _make_char_det(char_bbox, char_score):
         l, r = int(min(char_bbox[:8:2])), int(max(char_bbox[:8:2]))
         t, b = int(min(char_bbox[1:8:2])), int(max(char_bbox[1:8:2]))
-        detection['tblr'] = [t, b, l, r]
         sorted_ids = sorted(char_ids, key=lambda i: char_score[i],
                             reverse=True)
-        detection['labels'] = {char_dict[i].lower(): float(char_score[i])
-                               for i in sorted_ids}
-        detections.append(detection)
+        return {
+            'tblr': [t, b, l, r],
+            'polygon': [int(v) for v in char_bbox[:8]],
+            'labels': {char_dict[i].lower(): float(char_score[i])
+                       for i in sorted_ids},
+        }
+
+    # --- word-level detections (with nested chars) ---
+    words = []
+    for wi in word_instances:
+        wb = wi.word_bbox  # 8-element array: x1,y1,...,x4,y4
+        l, r = int(min(wb[0:8:2])), int(max(wb[0:8:2]))
+        t, b = int(min(wb[1:8:2])), int(max(wb[1:8:2]))
+        chars = [_make_char_det(cb, cs)
+                 for cb, cs in zip(wi.char_bboxes, wi.char_scores)]
+        words.append({
+            'tblr': [t, b, l, r],
+            'polygon': [int(v) for v in wb[:8]],
+            'text': wi.text,
+            'text_score': float(wi.text_score),
+            'word_bbox_score': float(wi.word_bbox_score),
+            'chars': chars,
+        })
+
     os.makedirs(save_root, exist_ok=True)
     with open(os.path.join(save_root, f"{image_id}.json"), "w") as f:
-        json.dump(detections, f, indent=2)
+        json.dump(words, f, indent=2)
 
 
 # ---------------------------------------------------------------------------
