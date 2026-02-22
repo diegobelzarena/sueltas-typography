@@ -10,7 +10,7 @@ Example:
     python scripts/run_charnet.py config.yaml input_root/ output_root/
 
 This is a thin wrapper around the existing ``charnet`` machinery (see
-``src/charnet/tools/test_net.py``).
+``src/charnet_src/tools/test_net.py``).
 """
 
 import os

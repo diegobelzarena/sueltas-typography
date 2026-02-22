@@ -25,4 +25,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["src", "src/charnet"]
+where = ["src", "src/charnet_src"]
