@@ -16,6 +16,62 @@ from shapely.geometry import Polygon
 import pyclipper
 
 
+# -----------------------------------------------------------------------
+# BK-tree for fast approximate string matching against the lexicon.
+# -----------------------------------------------------------------------
+
+class _BKNode:
+    __slots__ = ("word", "children")
+
+    def __init__(self, word):
+        self.word = word
+        self.children = {}
+
+
+class BKTree:
+    """A BK-tree for edit-distance queries.  Build once from the lexicon,
+    then call ``search(word, max_dist)`` to find the closest match in
+    roughly *O(log n)* time instead of scanning all entries."""
+
+    def __init__(self, words):
+        it = iter(words)
+        self.root = _BKNode(next(it))
+        for w in it:
+            self._insert(self.root, w)
+
+    @staticmethod
+    def _insert(node, word):
+        d = editdistance.eval(node.word, word)
+        while d in node.children:
+            node = node.children[d]
+            d = editdistance.eval(node.word, word)
+        node.children[d] = _BKNode(word)
+
+    def search(self, word, max_dist):
+        """Return ``(best_distance, best_word)`` within *max_dist*, or
+        ``(None, None)`` if nothing is close enough."""
+        best_dist = max_dist + 1
+        best_word = None
+        stack = [self.root]
+        while stack:
+            node = stack.pop()
+            d = editdistance.eval(word, node.word)
+            if d < best_dist:
+                best_dist = d
+                best_word = node.word
+                if d == 0:
+                    return 0, best_word
+            # Only explore children within the triangle-inequality window.
+            lo = max(0, d - best_dist + 1)
+            hi = d + best_dist
+            for dist_key, child in node.children.items():
+                if lo <= dist_key <= hi:
+                    stack.append(child)
+        if best_dist <= max_dist:
+            return best_dist, best_word
+        return None, None
+
+
 def load_lexicon(path):
     lexicon = list()
     with open(path, 'rt') as fr:
@@ -63,6 +119,10 @@ class OrientedTextPostProcessing(nn.Module):
         self.char_nms_iou_thresh = char_nms_iou_thresh
         self.char_dict = load_char_dict(char_dict_file)
         self.lexicon = load_lexicon(word_lexicon_path)
+        # Build a BK-tree over upper-cased lexicon for ~O(log n) lookups
+        # instead of scanning all 87 k entries per uncertain word.
+        self._lexicon_upper = [w.upper() for w in self.lexicon]
+        self.bk_tree = BKTree(self._lexicon_upper)
 
     def forward(
             self, pred_word_fg, pred_word_tblr,
@@ -180,30 +240,21 @@ class OrientedTextPostProcessing(nn.Module):
         return oriented_char_bboxes, char_scores
 
     def filter_word_instances(self, word_instances, lexicon):
-        def match_lexicon(text, lexicon):
-            min_dist, min_idx = 1e8, None
-            for idx, voc in enumerate(lexicon):
-                dist = editdistance.eval(text.upper(), voc.upper())
-                if dist == 0:
-                    return 0, text
-                else:
-                    if dist < min_dist:
-                        min_dist = dist
-                        min_idx = idx
-            return min_dist, lexicon[min_idx]
+        bk = self.bk_tree
 
-        def filter_and_correct(word_ins, lexicon):
+        def filter_and_correct(word_ins):
             if len(word_ins.text) < 3:
                 return None
             elif word_ins.text.isalpha():
-                if word_ins.text_score >= 0.80:  
+                if word_ins.text_score >= 0.80:
                     if word_ins.text_score >= 0.98:
                         return word_ins
                     else:
-                        dist, voc = match_lexicon(word_ins.text, lexicon)
-                        word_ins.text = voc
-                        word_ins.text_edst = dist
-                        if dist <= 1:
+                        # BK-tree: find closest match within edit distance 1
+                        dist, voc = bk.search(word_ins.text.upper(), max_dist=1)
+                        if dist is not None:
+                            word_ins.text = voc
+                            word_ins.text_edst = dist
                             return word_ins
                         else:
                             return None
@@ -217,7 +268,7 @@ class OrientedTextPostProcessing(nn.Module):
 
         valid_word_instances = list()
         for word_ins in word_instances:
-            word_ins = filter_and_correct(word_ins, lexicon)
+            word_ins = filter_and_correct(word_ins)
             if word_ins is not None:
                 valid_word_instances.append(word_ins)
         return valid_word_instances

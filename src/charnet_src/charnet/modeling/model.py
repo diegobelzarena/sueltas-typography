@@ -13,7 +13,6 @@ from charnet.modeling.backbone.decoder import Decoder
 from collections import OrderedDict
 from torch.functional import F
 from charnet.modeling.layers import Scale
-import torchvision.transforms as T
 from .postprocessing import OrientedTextPostProcessing
 from charnet.config import cfg
 
@@ -177,20 +176,75 @@ class CharNet(nn.Module):
 
         return char_bboxes, char_scores, word_instances
 
+    def forward_gpu(self, im):
+        """Run only the GPU part (backbone + heads + softmax).
+
+        Parameters
+        ----------
+        im : numpy array (H, W, 3) BGR uint8 — already resized.
+
+        Returns
+        -------
+        dict of numpy arrays ready for CPU post-processing.
+        """
+        im_t = self.transform(im).cuda()
+        im_t = im_t.unsqueeze(0)
+
+        # Use automatic mixed precision (FP16) to roughly halve GPU
+        # memory bandwidth and increase throughput on modern GPUs.
+        with torch.cuda.amp.autocast(dtype=torch.float16):
+            features = self.backbone(im_t)
+            pred_word_fg, pred_word_tblr, pred_word_orient = self.word_detector(features)
+            pred_char_fg, pred_char_tblr, pred_char_orient = self.char_detector(features)
+            recognition_results = self.char_recognizer(features)
+
+        # Softmax in FP32 for numerical stability.
+        pred_word_fg = F.softmax(pred_word_fg.float(), dim=1)
+        pred_char_fg = F.softmax(pred_char_fg.float(), dim=1)
+        pred_char_cls = F.softmax(recognition_results.float(), dim=1)
+
+        pred_word_fg, pred_word_tblr, \
+        pred_word_orient, pred_char_fg, \
+        pred_char_tblr, pred_char_cls, \
+        pred_char_orient = to_numpy_or_none(
+            pred_word_fg, pred_word_tblr,
+            pred_word_orient, pred_char_fg,
+            pred_char_tblr, pred_char_cls,
+            pred_char_orient
+        )
+
+        return {
+            "pred_word_fg": pred_word_fg[0, 1],
+            "pred_word_tblr": pred_word_tblr[0],
+            "pred_word_orient": pred_word_orient[0, 0],
+            "pred_char_fg": pred_char_fg[0, 1],
+            "pred_char_tblr": pred_char_tblr[0],
+            "pred_char_cls": pred_char_cls[0],
+        }
+
+    def postprocess(self, preds, im_scale_w, im_scale_h, original_im_w, original_im_h):
+        """Run only the CPU post-processing on pre-computed predictions."""
+        return self.post_processing(
+            preds["pred_word_fg"], preds["pred_word_tblr"],
+            preds["pred_word_orient"], preds["pred_char_fg"],
+            preds["pred_char_tblr"], preds["pred_char_cls"],
+            im_scale_w, im_scale_h,
+            original_im_w, original_im_h,
+        )
+
     def build_transform(self):
-        to_rgb_transform = T.Lambda(lambda x: x[[2, 1, 0]])
+        """Build an image transform that converts a BGR uint8 numpy array
+        to a normalised RGB float tensor — without the unnecessary
+        numpy → PIL → tensor round-trip of the original code.
+        """
+        mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
+        std  = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
 
-        normalize_transform = T.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
-        )
+        def _transform(im_bgr_uint8):
+            # (H, W, 3) uint8 BGR → (3, H, W) float32 RGB, normalised
+            im = im_bgr_uint8[:, :, ::-1].copy()          # BGR → RGB (contiguous)
+            im = torch.from_numpy(im).permute(2, 0, 1).float() / 255.0
+            im = (im - mean) / std
+            return im
 
-        transform = T.Compose(
-            [
-                T.ToPILImage(),
-                T.ToTensor(),
-                to_rgb_transform,
-                normalize_transform,
-            ]
-        )
-        return transform
+        return _transform
