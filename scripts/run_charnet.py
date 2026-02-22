@@ -19,14 +19,24 @@ import json
 import torch
 import cv2
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor
 from charnet.config import cfg
 from charnet.modeling.model import CharNet
 
 
-def save_char_probas(char_bboxes, char_scores, image_id, save_root):
-    # same logic as charnet/tools/test_net.py
+def save_char_probas(char_bboxes, char_scores, image_id, save_root,
+                     char_dict_file):
+    """Serialise per-character detection probabilities to a JSON file.
+
+    Parameters
+    ----------
+    char_dict_file : str
+        Path to the character dictionary (passed explicitly so this
+        function can be dispatched to a worker process without
+        depending on the global ``cfg`` object).
+    """
     from charnet.modeling.postprocessing import load_char_dict
-    char_dict = load_char_dict(cfg.CHAR_DICT_FILE)
+    char_dict = load_char_dict(char_dict_file)
     char_ids = char_dict.keys()
     detections = []
     for char_bbox, char_score in zip(char_bboxes, char_scores):
@@ -44,8 +54,12 @@ def save_char_probas(char_bboxes, char_scores, image_id, save_root):
 
 
 def resize(im, size):
+    """Resize so that the height equals *size* (rounded to SIZE_DIVISIBILITY).
+
+    Width is scaled proportionally (also rounded to SIZE_DIVISIBILITY).
+    """
     h, w, _ = im.shape
-    scale = max(h, w) / float(size)
+    scale = h / float(size)
     image_resize_height = int(round(h / scale / cfg.SIZE_DIVISIBILITY) * cfg.SIZE_DIVISIBILITY)
     image_resize_width = int(round(w / scale / cfg.SIZE_DIVISIBILITY) * cfg.SIZE_DIVISIBILITY)
     scale_h = float(h) / image_resize_height
@@ -87,26 +101,38 @@ def main(argv=None):
     charnet.eval()
     charnet.cuda()
 
-    for doc in sorted(os.listdir(args.input_root)):
-        doc_path = os.path.join(args.input_root, doc)
-        if not os.path.isdir(doc_path):
-            continue
-        out_path = os.path.join(args.output_root, doc)
-        print(f"Processing document {doc}...")
-        # new process folder that outputs JSONs
-        os.makedirs(out_path, exist_ok=True)
-        for im_name in sorted(os.listdir(doc_path)):
-            if not im_name.lower().endswith(".png"):
+    # Use a pool of CPU workers to serialise JSON results in parallel
+    # while the GPU processes the next image.
+    num_workers = min(4, os.cpu_count() or 1)
+    with ProcessPoolExecutor(max_workers=num_workers) as pool:
+        futures = []
+        for doc in sorted(os.listdir(args.input_root)):
+            doc_path = os.path.join(args.input_root, doc)
+            if not os.path.isdir(doc_path):
                 continue
-            im_file = os.path.join(doc_path, im_name)
-            im_original = cv2.imread(im_file)
-            im, scale_w, scale_h, original_w, original_h = resize(im_original, size=cfg.INPUT_SIZE)
-            with torch.no_grad():
-                char_bboxes, char_scores, word_instances = charnet(im, scale_w, scale_h, original_w, original_h)
-                save_char_probas(
+            out_path = os.path.join(args.output_root, doc)
+            print(f"Processing document {doc}...")
+            os.makedirs(out_path, exist_ok=True)
+            for im_name in sorted(os.listdir(doc_path)):
+                if not im_name.lower().endswith(".png"):
+                    continue
+                im_file = os.path.join(doc_path, im_name)
+                im_original = cv2.imread(im_file)
+                im, scale_w, scale_h, original_w, original_h = resize(im_original, size=cfg.INPUT_SIZE)
+                with torch.no_grad():
+                    char_bboxes, char_scores, word_instances = charnet(im, scale_w, scale_h, original_w, original_h)
+                # Submit the (CPU-heavy) JSON serialisation to a worker
+                # process so the main process can feed the next image to
+                # the GPU without waiting.
+                futures.append(pool.submit(
+                    save_char_probas,
                     char_bboxes, char_scores,
-                    os.path.splitext(im_name)[0], out_path
-                )
+                    os.path.splitext(im_name)[0], out_path,
+                    cfg.CHAR_DICT_FILE,
+                ))
+        # Wait for all pending saves and propagate any exceptions.
+        for fut in futures:
+            fut.result()
 
 if __name__ == '__main__':
     main()

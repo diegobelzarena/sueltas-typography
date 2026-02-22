@@ -21,7 +21,10 @@ dependencies = [
     "matplotlib",
     "tqdm",
     "opencv-python",
-    "scikit-image"
+    "scikit-image",
+    "editdistance",
+    "pyclipper",
+    "shapely"
 ]
 
 [tool.setuptools.packages.find]
