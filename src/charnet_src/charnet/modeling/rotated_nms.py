@@ -10,6 +10,20 @@ import pyclipper
 from shapely.geometry import Polygon
 
 
+def _aabb(boxes):
+    """Return (N, 4) axis-aligned bounding boxes [xmin, ymin, xmax, ymax]."""
+    xs = boxes[:, 0:8:2]
+    ys = boxes[:, 1:8:2]
+    return np.stack([xs.min(axis=1), ys.min(axis=1),
+                     xs.max(axis=1), ys.max(axis=1)], axis=1)
+
+
+def _aabb_overlap(aabb_i, aabb_j):
+    """Fast check whether two AABBs overlap (scalar)."""
+    return not (aabb_j[0] > aabb_i[2] or aabb_j[2] < aabb_i[0] or
+                aabb_j[1] > aabb_i[3] or aabb_j[3] < aabb_i[1])
+
+
 def nms(boxes, overlapThresh, neighbourThresh=0.5, minScore=0, num_neig=0):
     new_boxes = np.zeros_like(boxes)
     pick = []
@@ -17,6 +31,7 @@ def nms(boxes, overlapThresh, neighbourThresh=0.5, minScore=0, num_neig=0):
     areas = [Polygon([(b[0], b[1]), (b[2], b[3]), (b[4], b[5]), (b[6], b[7])]).area
              for b in boxes]
     polygons = pyclipper.scale_to_clipper(boxes[:, :8].reshape((-1, 4, 2)))
+    aabbs = _aabb(boxes)
     order = boxes[:, 8].argsort()[::-1]
     for _i, i in enumerate(order):
         if suppressed[i] is False:
@@ -24,6 +39,9 @@ def nms(boxes, overlapThresh, neighbourThresh=0.5, minScore=0, num_neig=0):
             neighbours = list()
             for j in order[_i+1:]:
                 if suppressed[j] is False:
+                    # --- AABB pre-filter: skip expensive polygon intersection ---
+                    if not _aabb_overlap(aabbs[i], aabbs[j]):
+                        continue
                     try:
                         pc = pyclipper.Pyclipper()
                         pc.AddPath(polygons[i], pyclipper.PT_CLIP, True)
@@ -63,6 +81,7 @@ def nms_with_char_cls(boxes, char_scores, overlapThresh, neighbourThresh=0.5, mi
     areas = [Polygon([(b[0], b[1]), (b[2], b[3]), (b[4], b[5]), (b[6], b[7])]).area
              for b in boxes]
     polygons = pyclipper.scale_to_clipper(boxes[:, :8].reshape((-1, 4, 2)))
+    aabbs = _aabb(boxes)
     order = boxes[:, 8].argsort()[::-1]
     for _i, i in enumerate(order):
         if suppressed[i] is False:
@@ -70,6 +89,9 @@ def nms_with_char_cls(boxes, char_scores, overlapThresh, neighbourThresh=0.5, mi
             neighbours = list()
             for j in order[_i+1:]:
                 if suppressed[j] is False:
+                    # --- AABB pre-filter ---
+                    if not _aabb_overlap(aabbs[i], aabbs[j]):
+                        continue
                     try:
                         pc = pyclipper.Pyclipper()
                         pc.AddPath(polygons[i], pyclipper.PT_CLIP, True)

@@ -9,7 +9,7 @@ from torch import nn
 import numpy as np
 import cv2
 import editdistance
-from .utils import rotate_rect
+from .utils import rotate_rect, rotate_rect_vectorized
 from .rotated_nms import nms, nms_with_char_cls, \
     softnms, nms_poly
 from shapely.geometry import Polygon
@@ -95,18 +95,31 @@ class OrientedTextPostProcessing(nn.Module):
     ):
         word_stride = self.word_stride
         word_keep_rows, word_keep_cols = np.where(pred_word_fg > self.word_min_score)
-        oriented_word_bboxes = np.zeros((word_keep_rows.shape[0], 9), dtype=np.float32)
-        for idx in range(oriented_word_bboxes.shape[0]):
-            y, x = word_keep_rows[idx], word_keep_cols[idx]
-            t, b, l, r = pred_word_tblr[:, y, x]
-            o = pred_word_orient[y, x]
-            score = pred_word_fg[y, x]
-            four_points = rotate_rect(
-                scale_w * word_stride * (x-l), scale_h * word_stride * (y-t),
-                scale_w * word_stride * (x+r), scale_h * word_stride * (y+b),
-                o, scale_w * word_stride * x, scale_h * word_stride * y)
-            oriented_word_bboxes[idx, :8] = np.array(four_points, dtype=np.float32).flat
-            oriented_word_bboxes[idx, 8] = score
+        n = word_keep_rows.shape[0]
+        if n == 0:
+            return np.zeros((0, 9), dtype=np.float32)
+
+        y = word_keep_rows.astype(np.float32)
+        x = word_keep_cols.astype(np.float32)
+        tblr = pred_word_tblr[:, word_keep_rows, word_keep_cols]  # (4, n)
+        t, b, l, r = tblr[0], tblr[1], tblr[2], tblr[3]
+        orient = pred_word_orient[word_keep_rows, word_keep_cols]
+        scores = pred_word_fg[word_keep_rows, word_keep_cols]
+
+        sw = np.float32(scale_w * word_stride)
+        sh = np.float32(scale_h * word_stride)
+
+        x1 = sw * (x - l)
+        y1 = sh * (y - t)
+        x2 = sw * (x + r)
+        y2 = sh * (y + b)
+        cx = sw * x
+        cy = sh * y
+
+        oriented_word_bboxes = np.empty((n, 9), dtype=np.float32)
+        oriented_word_bboxes[:, :8] = rotate_rect_vectorized(x1, y1, x2, y2, orient, cx, cy)
+        oriented_word_bboxes[:, 8] = scores
+
         keep, oriented_word_bboxes = nms(oriented_word_bboxes, self.word_nms_iou_thresh, num_neig=1)
         oriented_word_bboxes = oriented_word_bboxes[keep]
         oriented_word_bboxes[:, :8] = oriented_word_bboxes[:, :8].round()
@@ -126,24 +139,36 @@ class OrientedTextPostProcessing(nn.Module):
         else:
             th, tw = pred_char_fg.shape
             word_fg_mask = cv2.resize((pred_word_fg > self.word_min_score).astype(np.uint8),
-                                      (tw, th), interpolation=cv2.INTER_NEAREST).astype(np.bool)
+                                      (tw, th), interpolation=cv2.INTER_NEAREST).astype(np.bool_)
             char_keep_rows, char_keep_cols = np.where(
                 word_fg_mask & (pred_char_fg > self.char_min_score))
 
-        oriented_char_bboxes = np.zeros((char_keep_rows.shape[0], 9), dtype=np.float32)
-        char_scores = np.zeros((char_keep_rows.shape[0], self.num_char_class), dtype=np.float32)
-        for idx in range(oriented_char_bboxes.shape[0]):
-            y, x = char_keep_rows[idx], char_keep_cols[idx]
-            t, b, l, r = pred_char_tblr[:, y, x]
-            o = 0.0  # pred_char_orient[y, x]
-            score = pred_char_fg[y, x]
-            four_points = rotate_rect(
-                scale_w * char_stride * (x-l), scale_h * char_stride * (y-t),
-                scale_w * char_stride * (x+r), scale_h * char_stride * (y+b),
-                o, scale_w * char_stride * x, scale_h * char_stride * y)
-            oriented_char_bboxes[idx, :8] = np.array(four_points, dtype=np.float32).flat
-            oriented_char_bboxes[idx, 8] = score
-            char_scores[idx, :] = pred_char_cls[:, y, x]
+        n = char_keep_rows.shape[0]
+        if n == 0:
+            return np.zeros((0, 9), dtype=np.float32), np.zeros((0, self.num_char_class), dtype=np.float32)
+
+        y = char_keep_rows.astype(np.float32)
+        x = char_keep_cols.astype(np.float32)
+        tblr = pred_char_tblr[:, char_keep_rows, char_keep_cols]  # (4, n)
+        t, b, l, r = tblr[0], tblr[1], tblr[2], tblr[3]
+        orient = np.zeros(n, dtype=np.float32)  # char orient is always 0
+        scores = pred_char_fg[char_keep_rows, char_keep_cols]
+
+        sw = np.float32(scale_w * char_stride)
+        sh = np.float32(scale_h * char_stride)
+
+        x1 = sw * (x - l)
+        y1 = sh * (y - t)
+        x2 = sw * (x + r)
+        y2 = sh * (y + b)
+        cx = sw * x
+        cy = sh * y
+
+        oriented_char_bboxes = np.empty((n, 9), dtype=np.float32)
+        oriented_char_bboxes[:, :8] = rotate_rect_vectorized(x1, y1, x2, y2, orient, cx, cy)
+        oriented_char_bboxes[:, 8] = scores
+        char_scores = pred_char_cls[:, char_keep_rows, char_keep_cols].T.astype(np.float32)  # (n, C)
+
         keep, oriented_char_bboxes, char_scores = nms_with_char_cls(
             oriented_char_bboxes, char_scores, self.char_nms_iou_thresh, num_neig=1
         )
@@ -216,20 +241,6 @@ class OrientedTextPostProcessing(nn.Module):
         return word_instances
 
     def parse_words(self, word_bboxes, char_bboxes, char_scores, char_dict):
-        def match(word_bbox, word_poly, char_bbox, char_poly):
-            word_xs = word_bbox[0:8:2]
-            word_ys = word_bbox[1:8:2]
-            char_xs = char_bbox[0:8:2]
-            char_ys = char_bbox[1:8:2]
-            if char_xs.min() > word_xs.max() or\
-               char_xs.max() < word_xs.min() or\
-               char_ys.min() > word_ys.max() or\
-               char_ys.max() < word_ys.min():
-                return 0
-            else:
-                inter = char_poly.intersection(word_poly)
-                return inter.area / (char_poly.area + word_poly.area - inter.area)
-
         def decode(char_scores):
             max_indices = char_scores.argmax(axis=1)
             text = [char_dict[idx] for idx in max_indices]
@@ -248,25 +259,85 @@ class OrientedTextPostProcessing(nn.Module):
         char_bbox_scores = char_bboxes[:, 8]
         word_bboxes = word_bboxes[:, :8]
         char_bboxes = char_bboxes[:, :8]
-        word_polys = [Polygon([(b[0], b[1]), (b[2], b[3]), (b[4], b[5]), (b[6], b[7])])
-                      for b in word_bboxes]
-        char_polys = [Polygon([(b[0], b[1]), (b[2], b[3]), (b[4], b[5]), (b[6], b[7])])
-                      for b in char_bboxes]
+
         num_word = word_bboxes.shape[0]
         num_char = char_bboxes.shape[0]
-        word_instances = list()
+
+        if num_word == 0 or num_char == 0:
+            return []
+
+        # ------------------------------------------------------------------
+        # AABB pre-filter: compute axis-aligned bounding boxes and use
+        # vectorised comparisons to rule out pairs that cannot possibly
+        # overlap.  Only the surviving (char, word) pairs are tested with
+        # the expensive Shapely polygon intersection.
+        # ------------------------------------------------------------------
+        word_xs = word_bboxes[:, 0:8:2]  # (W, 4)
+        word_ys = word_bboxes[:, 1:8:2]
+        w_xmin = word_xs.min(axis=1)     # (W,)
+        w_xmax = word_xs.max(axis=1)
+        w_ymin = word_ys.min(axis=1)
+        w_ymax = word_ys.max(axis=1)
+
+        char_xs = char_bboxes[:, 0:8:2]  # (C, 4)
+        char_ys = char_bboxes[:, 1:8:2]
+        c_xmin = char_xs.min(axis=1)     # (C,)
+        c_xmax = char_xs.max(axis=1)
+        c_ymin = char_ys.min(axis=1)
+        c_ymax = char_ys.max(axis=1)
+
+        # Broadcast: (C, 1) vs (W,) → (C, W) boolean masks
+        no_overlap = (
+            (c_xmin[:, None] > w_xmax[None, :]) |
+            (c_xmax[:, None] < w_xmin[None, :]) |
+            (c_ymin[:, None] > w_ymax[None, :]) |
+            (c_ymax[:, None] < w_ymin[None, :])
+        )
+        # candidate_pairs: list of (char_idx, word_idx) that pass the AABB test
+        maybe_overlap = ~no_overlap  # (C, W)
+
+        # Pre-build Shapely polygons only for items that have at least one candidate
+        word_polys = [None] * num_word
+        char_polys = [None] * num_char
+
+        def _get_word_poly(j):
+            if word_polys[j] is None:
+                b = word_bboxes[j]
+                word_polys[j] = Polygon([(b[0], b[1]), (b[2], b[3]), (b[4], b[5]), (b[6], b[7])])
+            return word_polys[j]
+
+        def _get_char_poly(i):
+            if char_polys[i] is None:
+                b = char_bboxes[i]
+                char_polys[i] = Polygon([(b[0], b[1]), (b[2], b[3]), (b[4], b[5]), (b[6], b[7])])
+            return char_polys[i]
+
         word_chars = [list() for _ in range(num_word)]
+
         for idx in range(num_char):
-            char_bbox = char_bboxes[idx]
-            char_poly = char_polys[idx]
-            match_scores = np.zeros((num_word,), dtype=np.float32)
-            for jdx in range(num_word):
-                word_bbox = word_bboxes[jdx]
-                word_poly = word_polys[jdx]
-                match_scores[jdx] = match(word_bbox, word_poly, char_bbox, char_poly)
-            jdx = np.argmax(match_scores)
-            if match_scores[jdx] > 0:
-                word_chars[jdx].append(idx)
+            # Candidate word indices from AABB filter
+            cand_words = np.where(maybe_overlap[idx])[0]
+            if cand_words.size == 0:
+                continue
+
+            char_poly = _get_char_poly(idx)
+            char_area = char_poly.area
+            if char_area == 0:
+                continue
+
+            best_iou = 0.0
+            best_jdx = -1
+            for jdx in cand_words:
+                word_poly = _get_word_poly(jdx)
+                inter = char_poly.intersection(word_poly).area
+                iou = inter / (char_area + word_poly.area - inter) if (char_area + word_poly.area - inter) > 0 else 0
+                if iou > best_iou:
+                    best_iou = iou
+                    best_jdx = jdx
+            if best_iou > 0:
+                word_chars[best_jdx].append(idx)
+
+        word_instances = list()
         for idx in range(num_word):
             char_indices = word_chars[idx]
             if len(char_indices) > 0:
