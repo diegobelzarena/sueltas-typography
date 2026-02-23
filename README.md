@@ -1,122 +1,182 @@
-# Theatre Chapbooks At Scale: A Statistical Comparative Analysis of Typography
+# Sueltas Typography
 
+> **Theatre Chapbooks At Scale: A Statistical Comparative Analysis of Typography**
+>
+> Official implementation — ICDAR 2026
 
-Official implementation of the paper *Theatre Chapbooks At Scale: A Statistical Comparative Analysis of Typography*, as submitted to ICDAR2026.
+Unsupervised pipeline for extracting, clustering, and comparing typographic features from historical printed documents.
 
+---
 
-## Install
+## Installation
 
-Python 3.11 is recommended.
+**Requirements:** Python 3.11+, CUDA-capable GPU recommended.
 
-Install dependencies and make the package importable:
-
-```sh
-pip install -r requirements.txt    # install any tools
-pip install -e .                   # set up the project in editable mode
+```bash
+pip install -r requirements.txt
+pip install -e .
 ```
 
-(After this your `python` interpreter will find the `io` package.)
+---
 
+## Quick Start
 
-## Data preparation
+Run the complete pipeline on a corpus with a single command:
 
-The repository expects document images organised as described in the
-"Dataset input specification" (see paper or docs). A helper script is
-provided for converting a directory of scanned PDFs into the folder
-structure used by the pipeline:
-
-```sh
-python scripts/convert_pdfs.py /path/to/input_pdfs /path/to/output_images
+```bash
+python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4 --workers 4
 ```
 
-The converter takes two positional arguments: the directory containing
-PDFs and the destination directory where each PDF will produce its own
-subfolder of PNGs.  Before extraction it looks for a matching CSV in
-an optional `--dpi-csv-dir`; that CSV should contain DPI estimates for
-each page.  A single DPI value is computed as the median of all
-reported DPIs and rounded to the nearest multiple of 50.  The output
-images are then rescaled so that their metadata declares a uniform
-150 dpi.
+Or run individual steps (see below for details).
 
-Use the `--dpi-csv-dir` option to point the converter at the folder
-containing those CSV files.
+---
 
-Example:
+## Pipeline Overview
 
-```sh
-python scripts/convert_pdfs.py --metadata --info pdfs/ imgs/
-``````
-
-Each PDF will produce a subdirectory containing a `page_<n>.png` file for
-each page.
-
-Another utility script helps match catalogue signatures to actual PDF
-files and optionally copy them out of a larger folder:
-
-```sh
-python scripts/search_pdfs.py \
-    data/corpus-1/ordered-table-corpus1.csv \
-    /path/to/pdf_folder \
-    --out /path/to/output_dir
+The pipeline assumes document images (PNG) are already available, organized as:
+```
+data/corpus-1/imgs/
+    document_001/
+        page_001.png
+        page_002.png
+        ...
+    document_002/
+        ...
 ```
 
-The `--out` option is optional; when provided the script will copy every
-PDF it finds into the target directory, which is useful for assembling a
-curated subset.
+### Step 1 — OCR with CharNet
 
-## Repository layout
+Detect characters and words using the CharNet neural network.
 
-- `src/` - Python package and modules for data handling and analysis
-- `scripts/` - utility entry‑point scripts (e.g. `convert_pdfs.py`)
-- `examples/` - small example datasets or notebooks
-- `tests/` – unit tests
-- `notebooks/` – exploratory Jupyter notebooks
-- `requirements.txt` – global Python dependencies
-
-More detailed documentation is available in the `docs/` directory (if
-present) or the paper itself.
-
-## Character network module
-
-Additional code from the CharNet repository has been integrated under
-`src/charnet`.  Its dependencies are listed in `requirements.txt`, and
-it is installed automatically when the project is installed via
-`pip install -e .`.
-
-A convenience script `scripts/run_charnet.py` runs the network across a
-folder of documents.  Input should follow the standard layout – each
-document has its own subdirectory containing PNG pages – and the output
-root will mirror that structure:
-
-```sh
-python scripts/run_charnet.py config.yaml input_root/ output_root/
+```bash
+python scripts/run_charnet.py configs/icdar2015_hourglass88.yaml \
+    data/corpus-1/imgs  data/corpus-1/charnet \
+    --workers 4
 ```
 
-Results for each image are saved as **JSON files** containing
-character bounding boxes and probability scores.
+**Output:** `data/corpus-1/charnet/{document}/{page}.json` — word/character bounding boxes with recognition scores.
 
-## DPI / size reporting
+---
 
-A helper module and script can scan a directory of PDFs and/or
-subdirectories of TIFFs and emit a consolidated CSV describing each
-page’s resolution and physical dimensions.  The logic was borrowed from
-an existing standalone script and folded into the package as
-``src/io/dpi_info.py``
+### Step 2 — Character Extraction via Minimum Cost Paths
 
-```sh
-python scripts/compute_dpi.py /path/to/root_dir -o dpi.csv
+Segment individual characters using graph-based minimum cost path algorithm, compute page orientations via FFT, and embed characters to fixed-size images.
+
+```bash
+python scripts/character_extraction.py \
+    data/corpus-1/imgs  data/corpus-1/charnet \
+    --workers 4
 ```
 
-Optionally write a CSV for each input file or folder rather than a
-single consolidated table:
+**Output:** `{page}_data.npz` files containing:
+- `char_imgs` — embedded character images (40×32, normalized)
+- `char_labels` — OCR labels
+- `word_orientations` — page orientation per word (FFT-based)
+- `word_stroke_orientations` — stroke angle per word (structure tensor)
 
-```sh
-python scripts/compute_dpi.py /path/to/root_dir -o output_directory --per-file
+---
+
+### Step 3 — Italic Detection via Structure Tensor
+
+Classify characters as italic or round based on stroke orientation distribution.
+
+```bash
+python scripts/italic_detection.py data/corpus-1/charnet \
+    --process-subfolders
 ```
 
-The script strips any original extension from the output names, so a
-source called `foo.pdf` will produce `output_directory/foo.csv`.
-The output contains columns for batch, suelta, page filename, DPI
-(width/height), dimensions in inches and centimetres, and the source of
-those physical values (PDF metadata or TIFF DPI).  This is useful for
-quality control and for populating the datasets used in the paper.
+**Output:** `italic_labels.npz` per document containing:
+- `char_italic` — boolean array (True = italic)
+- `threshold` — optimal separation angle
+
+---
+
+### Step 4 — Unsupervised Tree Clustering
+
+Cluster character images using GMM initialization and tree-based refinement.
+
+```bash
+python scripts/clustering.py data/corpus-1/charnet \
+    --process-subfolders --workers 8
+```
+
+**Output:** `clusters_all.npz` per document containing:
+- `cluster_labels` — cluster assignment per character
+- `cluster_means` — cluster centroids (40×32 images)
+- `cluster_counts` — characters per cluster
+
+---
+
+### Step 5 — Typographic Distance Computation
+
+*Coming soon.*
+
+---
+
+## Notebooks
+
+Interactive notebooks for visualization and debugging:
+
+| Notebook | Description |
+|----------|-------------|
+| `visualize_char_extraction.ipynb` | Inspect extracted characters, bounding boxes, and orientation data |
+| `visualize_italic.ipynb` | Visualize italic/round classification with stroke histograms |
+| `visualize_clustering.ipynb` | Browse cluster means, character assignments, and compare documents |
+| `visualize_detections.ipynb` | Browse CharNet OCR detections overlaid on page images |
+| `debug_char_segment.ipynb` | Debug character segmentation algorithm |
+
+---
+
+## Utilities
+
+### PDF to PNG Conversion
+
+```bash
+python scripts/convert_pdfs.py input_pdfs/ output_imgs/ --dpi-csv-dir dpis/
+```
+
+### DPI Estimation
+
+```bash
+python scripts/compute_dpi.py input_pdfs/ -o dpis/ --per-file
+```
+
+### Catalogue Search
+
+```bash
+python scripts/search_pdfs.py catalogue.csv pdf_folder/ --out selected/
+```
+
+### Validate Pipeline Outputs
+
+```bash
+python scripts/validate_outputs.py data/corpus-1/charnet/doc001
+python scripts/validate_outputs.py data/corpus-1/charnet --all
+```
+
+---
+
+## Repository Structure
+
+```
+scripts/           # Pipeline entry points
+src/
+  ├── charnet/     # CharNet OCR module
+  ├── image_processing/  # Orientation, segmentation, clustering
+  └── io/          # PDF/image utilities
+notebooks/         # Visualization notebooks
+data/              # Input/output data (not tracked)
+```
+
+---
+
+## Citation
+
+```bibtex
+@inproceedings{sueltas2026,
+  title={Theatre Chapbooks At Scale: A Statistical Comparative Analysis of Typography},
+  author={...},
+  booktitle={ICDAR},
+  year={2026}
+}
+```

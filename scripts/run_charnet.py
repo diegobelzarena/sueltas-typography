@@ -165,6 +165,8 @@ def main(argv=None):
                         help="where to write results, preserving structure")
     parser.add_argument("--workers", type=int, default=0,
                         help="CPU workers for postprocessing (default: ncpus-1)")
+    parser.add_argument("--skip-existing", action="store_true",
+                        help="Skip images that already have JSON output")
     args = parser.parse_args(argv)
 
     cfg.merge_from_file(args.config_file)
@@ -195,6 +197,7 @@ def main(argv=None):
 
     # ---- collect all images up-front ---------------------------------------
     image_tasks = []  # list of (im_file, image_id, out_dir)
+    skipped = 0
     for doc in sorted(os.listdir(args.input_root)):
         doc_path = os.path.join(args.input_root, doc)
         if not os.path.isdir(doc_path):
@@ -203,14 +206,24 @@ def main(argv=None):
         for im_name in sorted(os.listdir(doc_path)):
             if not im_name.lower().endswith(".png"):
                 continue
+            image_id = os.path.splitext(im_name)[0]
+            # Check if output already exists
+            if args.skip_existing:
+                json_path = os.path.join(out_path, f"{image_id}.json")
+                if os.path.exists(json_path):
+                    skipped += 1
+                    continue
             image_tasks.append((
                 os.path.join(doc_path, im_name),
-                os.path.splitext(im_name)[0],
+                image_id,
                 out_path,
             ))
 
+    if skipped > 0:
+        print(f"Skipped {skipped} images with existing outputs.")
+
     if not image_tasks:
-        print("No images found.")
+        print("No images to process.")
         return
 
     print(f"Found {len(image_tasks)} images.  "

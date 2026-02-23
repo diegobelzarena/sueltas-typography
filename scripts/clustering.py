@@ -291,10 +291,10 @@ def main(argv=None):
         help="Skip documents that already have clusters_all.npz",
     )
     parser.add_argument(
-        "--n-jobs",
+        "--workers",
         type=int,
         default=1,
-        help="Number of parallel jobs for tree refinement",
+        help="Number of parallel workers for tree refinement",
     )
     parser.add_argument(
         "--device",
@@ -316,7 +316,7 @@ def main(argv=None):
         for i, subfolder in enumerate(subfolders, 1):
             result = process_document(
                 subfolder,
-                n_jobs=args.n_jobs,
+                n_jobs=args.workers,
                 skip_existing=args.skip_existing,
                 device=args.device,
             )
@@ -324,7 +324,7 @@ def main(argv=None):
     else:
         result = process_document(
             args.input_dir,
-            n_jobs=args.n_jobs,
+            n_jobs=args.workers,
             skip_existing=args.skip_existing,
             device=args.device,
         )
