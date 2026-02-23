@@ -14,6 +14,7 @@ matplotlib
 tqdm
 opencv-python
 scikit-image
+joblib
 editdistance
 pyclipper
 shapely
