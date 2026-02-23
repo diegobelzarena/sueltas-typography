@@ -146,8 +146,6 @@ class OrientedTextPostProcessing(nn.Module):
             char_scores, self.char_dict
         )
 
-        word_instances = self.filter_word_instances(word_instances, self.lexicon)
-
         return char_bboxes, char_scores, word_instances
 
     def parse_word_bboxes(
