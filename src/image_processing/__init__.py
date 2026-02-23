@@ -4,4 +4,5 @@ from .orientation import (
     filter_image_by_words,
     find_orientation_radial_profile,
 )
-from .preprocessing import bg_flatten
+from .preprocessing import bg_flatten, embed_noresize
+from .clustering import clusterize_gmm, tree_refine

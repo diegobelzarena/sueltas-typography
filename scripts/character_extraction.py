@@ -1,20 +1,21 @@
 #!/usr/bin/env python
 """Post-process CharNet OCR results: compute orientations, stroke angles,
-and character segmentation masks.
+character segmentation masks, and embedded character images.
 
 For each page that has a CharNet JSON file, this script:
 
 1. Loads the grayscale image and the word/char bounding boxes from JSON.
-2. Masks out non-word regions (``filter_image_by_words``, padding=10 px).
-3. Runs a sliding-window FFT to estimate local page orientation.
-4. Computes the structure tensor on the filtered image.
-5. For each word:
+2. Applies ``bg_flatten`` to the whole page (Poisson-based background removal).
+3. Masks out non-word regions (``filter_image_by_words``, padding=10 px).
+4. Runs a sliding-window FFT to estimate local page orientation.
+5. Computes the structure tensor on the filtered image.
+6. For each word:
    a. Assigns a page orientation (inverse-distance weighted from FFT windows).
    b. Computes a stroke orientation from the structure tensor crop.
    c. Crops the word (with padding = height/5), converts CharNet char tblrs
       to local coordinates, and runs ``char_segment`` to obtain character masks.
-6. Saves per-word orientations and refined char tblrs to a ``.npz`` file,
-   and character masks to a ``.joblib`` file.
+   d. Extracts masked character images (bg=1) and embeds them to 40×32.
+7. Saves everything to a single ``.npz`` file per page.
 
 Usage
 -----
@@ -30,7 +31,6 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import cv2
-import joblib
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -46,6 +46,7 @@ from image_processing.orientation import (
     structure_tensor,
 )
 from image_processing.char_segment import char_segment
+from image_processing.preprocessing import bg_flatten, embed_noresize
 
 
 # ---------------------------------------------------------------------------
@@ -130,20 +131,22 @@ def _crop_word(img, t, b, l, r, char_tblrs):
     return img[crop_t:crop_b, crop_l:crop_r], crop_t, crop_l
 
 
-def _prepare_word_image(word_crop):
-    """Contrast-normalise the word crop for char_segment (values in [0,1])."""
-    crop_f = word_crop.astype(np.float64)
-    kh = max(1, (crop_f.shape[0] // 2) * 2 + 1)
-    kw = max(1, (crop_f.shape[1] // 2) * 2 + 1)
-    blur = cv2.GaussianBlur(crop_f, (kw, kh),
-                            sigmaX=crop_f.shape[1] // 2,
-                            sigmaY=crop_f.shape[0] // 2)
-    cont = crop_f / (blur + 1e-6)
-    cont -= cont.min()
-    mx = cont.max()
-    if mx > 0:
-        cont /= mx
-    return cont
+def _extract_char_image(img_flat, tblr, mask):
+    """Extract a masked character image from the bg-flattened page.
+
+    Returns a float image where masked-out pixels are set to 1.0 (white).
+    """
+    t, b, l, r = tblr
+    crop = img_flat[t:b, l:r].copy()
+    # Apply mask: keep text pixels, set background to 1.0
+    mh, mw = mask.shape
+    ch, cw = crop.shape
+    # Handle possible size mismatch from rounding
+    h = min(mh, ch)
+    w = min(mw, cw)
+    out = np.ones_like(crop)
+    out[:h, :w][mask[:h, :w]] = crop[:h, :w][mask[:h, :w]]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -152,10 +155,11 @@ def _prepare_word_image(word_crop):
 
 def process_page(img_path: str, json_path: str, out_stem: str,
                  window_height: int = 512, window_width: int = 512,
-                 step_size: tuple = (256, 256), padding: int = 10) -> str:
-    """Process a single page: orientations + char segmentation.
+                 step_size: tuple = (256, 256), padding: int = 10,
+                 embed_h: int = 40, embed_w: int = 32) -> str:
+    """Process a single page: orientations + char segmentation + char images.
 
-    Writes ``{out_stem}.npz`` and ``{out_stem}.joblib``.
+    Writes ``{out_stem}.npz`` containing all per-page results.
     Returns a status string.
     """
     try:
@@ -173,12 +177,15 @@ def process_page(img_path: str, json_path: str, out_stem: str,
 
         word_tblrs = [w["tblr"] for w in words if "tblr" in w]
 
-        # -- Step 1: mask non-word regions -----------------------------------
+        # -- Step 1: bg_flatten the whole page -------------------------------
+        img_flat = bg_flatten(img, d=0, equalize=True)  # float [0, 1]
+
+        # -- Step 2: mask non-word regions (on uint8 for FFT) ----------------
         filtered_img = filter_image_by_words(img, word_tblrs, padding=padding)
         if filtered_img is None:
             return f"SKIP (filter failed): {img_path}"
 
-        # -- Step 2: sliding-window FFT orientation --------------------------
+        # -- Step 3: sliding-window FFT orientation --------------------------
         orientations, positions = local_fft_sliding_window(
             filtered_img,
             window_height=window_height,
@@ -188,16 +195,19 @@ def process_page(img_path: str, json_path: str, out_stem: str,
         if len(orientations) == 0:
             return f"SKIP (no FFT windows): {img_path}"
 
-        # -- Step 3: structure tensor ----------------------------------------
+        # -- Step 4: structure tensor ----------------------------------------
         img_norm = filtered_img.astype(np.float64) / 255.0
         tensor = structure_tensor(img_norm, sigma=0.0, rho=0.3)
         Jxx, Jxy, Jyy = tensor["Jxx"], tensor["Jxy"], tensor["Jyy"]
 
-        # -- Step 4: per-word processing -------------------------------------
+        # -- Step 5: per-word processing -------------------------------------
         word_orientations = np.full(len(words), np.nan, dtype=np.float32)
         word_stroke_orientations = np.full(len(words), np.nan, dtype=np.float32)
 
-        all_masks = []          # flat list of masks across all words
+        all_char_imgs = []      # raw masked crops (variable size), for embedding
+        all_char_labels = []    # OCR label per char
+        all_char_word_idx = []  # which word each char belongs to
+        all_masks = []          # boolean masks
         word_char_tblrs = []    # one array per word (refined tblrs in page coords)
         word_mask_indices = []  # indices into all_masks for each word
 
@@ -210,19 +220,19 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             cx = (wl + wr) / 2.0
             cy = (wt + wb) / 2.0
 
-            # 4a. Page orientation for this word
+            # 5a. Page orientation for this word
             page_ori = _assign_page_orientation(
                 cx, cy, orientations, positions, window_height, window_width)
             word_orientations[wi] = page_ori
 
-            # 4b. Stroke orientation from structure tensor crop
+            # 5b. Stroke orientation from structure tensor crop
             Jxx_crop = Jxx[wt:wb, wl:wr]
             Jxy_crop = Jxy[wt:wb, wl:wr]
             Jyy_crop = Jyy[wt:wb, wl:wr]
             word_stroke_orientations[wi] = _compute_stroke_orientation(
                 Jxx_crop, Jxy_crop, Jyy_crop, page_ori, n_chars)
 
-            # 4c. Character segmentation
+            # 5c. Character segmentation
             if n_chars < 2:
                 word_char_tblrs.append(np.array([]))
                 word_mask_indices.append(np.array([], dtype=np.int64))
@@ -232,8 +242,9 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             char_tblrs_page = np.array([c["tblr"] for c in chars])  # (n, 4)
 
             # Crop the word region (padding = height/5, expanded for chars)
+            # Use the bg-flattened image for char_segment
             crop, crop_t, crop_l = _crop_word(
-                img, wt, wb, wl, wr, char_tblrs_page)
+                img_flat, wt, wb, wl, wr, char_tblrs_page)
             if crop.size == 0 or crop.shape[0] < 3 or crop.shape[1] < 3:
                 word_char_tblrs.append(np.array([]))
                 word_mask_indices.append(np.array([], dtype=np.int64))
@@ -260,21 +271,20 @@ def process_page(img_path: str, json_path: str, out_stem: str,
                 word_char_tblrs.append(np.array([]))
                 word_mask_indices.append(np.array([], dtype=np.int64))
                 continue
+            valid_indices = np.where(valid)[0]
             local_tblrs = local_tblrs[valid]
-
-            # Prepare contrast-normalised image for char_segment
-            pre_img = _prepare_word_image(crop)
 
             widths = local_tblrs[:, 3] - local_tblrs[:, 2]
             refwidth = float(np.mean(widths)) if len(widths) > 0 else 1.0
             box_clu = np.ones(len(local_tblrs), dtype=int)
 
-            # Run char_segment
+            # Run char_segment on bg-flattened crop
             try:
-                char_data, _ = char_segment(
-                    pre_img, local_tblrs.copy(), box_clu, refwidth)
+                char_data, idxs_input = char_segment(
+                    crop, local_tblrs.copy(), box_clu, refwidth)
             except Exception:
                 char_data = []
+                idxs_input = []
 
             if not char_data:
                 word_char_tblrs.append(np.array([]))
@@ -284,38 +294,68 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             # Convert refined tblrs back to page coordinates and collect masks
             refined_tblrs = []
             mask_idxs = []
-            for (rt, rb, rl, rr), mask in char_data:
-                refined_tblrs.append([
+            for ci, ((rt, rb, rl, rr), mask) in enumerate(char_data):
+                page_tblr = [
                     rt + crop_t, rb + crop_t,
                     rl + crop_l, rr + crop_l,
-                ])
+                ]
+                refined_tblrs.append(page_tblr)
                 all_masks.append(mask)
                 mask_idxs.append(len(all_masks) - 1)
+
+                # 5d. Extract masked character image from bg-flattened page
+                char_img = _extract_char_image(img_flat, page_tblr, mask)
+                all_char_imgs.append(char_img)
+
+                # OCR label: map back to the original char index
+                orig_ci = valid_indices[idxs_input[ci]] if ci < len(idxs_input) else None
+                if orig_ci is not None and orig_ci < len(chars):
+                    lbl_dict = chars[orig_ci].get("labels", {})
+                    label = max(lbl_dict, key=lbl_dict.get) if lbl_dict else "?"
+                else:
+                    label = "?"
+                all_char_labels.append(label)
+                all_char_word_idx.append(wi)
 
             word_char_tblrs.append(np.array(refined_tblrs, dtype=np.int32))
             word_mask_indices.append(np.array(mask_idxs, dtype=np.int64))
 
-        # -- Save results ----------------------------------------------------
+        # -- Embed character images to fixed size ----------------------------
+        n_chars_total = len(all_char_imgs)
+        if n_chars_total > 0:
+            char_imgs_embedded, _ = embed_noresize(
+                all_char_imgs, h=embed_h, w=embed_w)
+        else:
+            char_imgs_embedded = np.zeros((0, embed_h, embed_w),
+                                         dtype=np.float64)
+
+        # -- Save results (single .npz per page) ----------------------------
         out_dir = os.path.dirname(out_stem)
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
 
-        # .npz: orientations + per-word char tblrs and mask index arrays
-        np.savez_compressed(
-            f"{out_stem}.npz",
+        save_dict = dict(
+            # Page-level
+            page_height=np.array([img_h]),
             fft_orientations=orientations,
             fft_positions=positions,
+            # Per-word
             word_orientations=word_orientations,
             word_stroke_orientations=word_stroke_orientations,
-            **{f"char_tblrs_{i}": v for i, v in enumerate(word_char_tblrs)},
-            **{f"mask_idx_{i}": v for i, v in enumerate(word_mask_indices)},
+            # Per-character (flat arrays, aligned by index)
+            char_imgs=char_imgs_embedded.astype(np.float32),
+            char_labels=np.array(all_char_labels, dtype="U1"),
+            char_word_idx=np.array(all_char_word_idx, dtype=np.int32),
         )
+        # Per-word variable-length arrays
+        for i, v in enumerate(word_char_tblrs):
+            save_dict[f"char_tblrs_{i}"] = v
+        for i, v in enumerate(word_mask_indices):
+            save_dict[f"mask_idx_{i}"] = v
 
-        # .joblib: list of boolean masks (one per char across all words)
-        joblib.dump(all_masks, f"{out_stem}.joblib", compress=0)
+        np.savez_compressed(f"{out_stem}.npz", **save_dict)
 
-        n_masks = len(all_masks)
-        return f"OK: {out_stem}  ({len(words)} words, {n_masks} masks)"
+        return f"OK: {out_stem}  ({len(words)} words, {n_chars_total} chars)"
 
     except Exception as exc:
         import traceback
@@ -345,6 +385,10 @@ def main(argv=None):
                         help="Padding around words for image masking")
     parser.add_argument("--skip-existing", action="store_true",
                         help="Skip pages that already have output files")
+    parser.add_argument("--embed-h", type=int, default=40,
+                        help="Height of embedded char images (default: 40)")
+    parser.add_argument("--embed-w", type=int, default=32,
+                        help="Width of embedded char images (default: 32)")
     args = parser.parse_args(argv)
 
     image_root = Path(args.image_root)
@@ -365,10 +409,8 @@ def main(argv=None):
             json_file = json_dir / f"{img_file.stem}.json"
             if not json_file.exists():
                 continue
-            out_stem = str(json_dir / f"{img_file.stem}_orientation")
-            if args.skip_existing and (
-                    os.path.exists(f"{out_stem}.npz") and
-                    os.path.exists(f"{out_stem}.joblib")):
+            out_stem = str(json_dir / f"{img_file.stem}_chars")
+            if args.skip_existing and os.path.exists(f"{out_stem}.npz"):
                 continue
             tasks.append((str(img_file), str(json_file), out_stem))
 
@@ -385,6 +427,7 @@ def main(argv=None):
             pool.submit(
                 process_page, img_p, json_p, out_s,
                 args.window_height, args.window_width, step_size, args.padding,
+                args.embed_h, args.embed_w,
             )
             for img_p, json_p, out_s in tasks
         ]

@@ -24,7 +24,9 @@ dependencies = [
     "scikit-image",
     "editdistance",
     "pyclipper",
-    "shapely"
+    "shapely",
+    "joblib",
+    "scikit-learn"
 ]
 
 [tool.setuptools.packages.find]

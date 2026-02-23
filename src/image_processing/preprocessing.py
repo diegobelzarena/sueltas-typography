@@ -1,7 +1,12 @@
+import math
 import numpy as np
 from skimage.filters import threshold_sauvola
 from skimage.morphology import diamond, dilation
-from tools.poisson import edit_poisson
+import skimage.transform as skt
+from tqdm import tqdm
+
+from .tools.poisson import edit_poisson
+from .tools.inverse_compositional import matrix_to_p
 
 
 def bg_flatten(img_doc: np.ndarray,
@@ -46,5 +51,44 @@ def bg_flatten(img_doc: np.ndarray,
     return np.clip(out, 0, 1)
 
 
+def embed_noresize(imgs: list[np.ndarray],
+          h: int = 32,
+          w: int = 32,
+          ) -> tuple[np.ndarray, np.ndarray]:
+    
+    max_h, max_w = h, w
+    img_ready = np.zeros((len(imgs), max_h, max_w))
+    tf_params = np.zeros((len(imgs), 3))
+    for i, img in tqdm(enumerate(imgs),
+                       desc="Processing characters", total=len(imgs)):
+        h,w = img.shape
+        if (h < max_h) and (w < max_w):
+            n_img = np.ones((max_h,max_w))
+            n_img[:h,:w] = img
+            h,w = n_img.shape
+            img = n_img.copy()
+            
+        cut_h, cut_w = [0,h], [0,w]
+        img = 1-img
+        normalized = img/(img.sum()+1e-7)
+        
+        ## Barycenter
+        coords = np.indices(img.shape) # (2, h, w)
+        bary = np.sum(normalized*coords, axis=(1, 2)) # (2,)
 
+        center = np.array([h,w])/2
+        transf = skt.SimilarityTransform(translation=(center-bary)[::-1])
+        transformed_image = skt.warp(img, transf.inverse, order=3)
+        # transformed_image-= transformed_image.min()
+        # transformed_image/= (transformed_image.max() + 1e-7)
+        
+        h_lims = max(0, max_h//2 - h//2), min(max_h, max_h//2 + math.ceil(h/2))
+        w_lims = max(0, max_w//2 - w//2), min(max_w, max_w//2 + math.ceil(w/2))
+        if max_h < h:
+            cut_h = max(0, h//2 - max_h//2), min(h, h//2 + math.ceil(max_h/2))
+        if max_w < w:
+            cut_w = max(0, w//2 - max_w//2), min(w, w//2 + math.ceil(max_w/2))
+        img_ready[i, h_lims[0]:h_lims[1], w_lims[0]:w_lims[1]] = transformed_image[cut_h[0]:cut_h[1], cut_w[0]:cut_w[1]]
+        tf_params[i] = matrix_to_p(transf.params, transform='homothety')
 
+    return img_ready, tf_params
