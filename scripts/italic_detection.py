@@ -156,7 +156,7 @@ def process_document(
     Process a single document folder to compute italic labels.
 
     Args:
-        doc_dir: Path to document folder containing *_orientation.npz files.
+        doc_dir: Path to document folder containing *_data.npz files.
         output_dir: Where to save the output .npz. If None, saves in doc_dir.
         skip_existing: Skip if output already exists.
 
@@ -177,7 +177,7 @@ def process_document(
         return f"SKIP: {doc_name} (already exists)"
 
     # -- Step 1: Collect data from all pages ----------------------------------
-    npz_files = sorted(doc_dir.glob("*_orientation.npz"))
+    npz_files = sorted(doc_dir.glob("*_data.npz"))
     if not npz_files:
         return f"SKIP: {doc_name} (no .npz files)"
 
@@ -185,7 +185,7 @@ def process_document(
     page_data = []  # List of (words, strokes, char_word_idx, n_chars)
 
     for npz_path in npz_files:
-        page_name = npz_path.stem.replace("_orientation", "")
+        page_name = npz_path.stem.replace("_data", "")
         json_path = npz_path.parent / f"{page_name}.json"
 
         if not json_path.exists():
@@ -299,7 +299,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "input_dir",
-        help="Document folder with *_orientation.npz files, "
+        help="Document folder with *_data.npz files, "
              "or parent folder if --process-subfolders is set",
     )
     parser.add_argument(

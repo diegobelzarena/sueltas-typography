@@ -43,7 +43,7 @@ def process_document(
     Process a single document folder to cluster characters.
 
     Args:
-        doc_dir: Path to document folder with *_orientation.npz files.
+        doc_dir: Path to document folder with *_data.npz files.
         n_jobs: Number of parallel jobs for tree refinement.
         skip_existing: Skip if clusters_all.npz already exists.
         device: PyTorch device ('cpu' or 'cuda').
@@ -66,7 +66,7 @@ def process_document(
     print("\nStep 1/5: Loading character data from pages...")
     step_start = time.time()
 
-    npz_files = sorted(doc_dir.glob("*_orientation.npz"))
+    npz_files = sorted(doc_dir.glob("*_data.npz"))
     if not npz_files:
         return f"SKIP: {doc_name} (no .npz files)"
 
@@ -277,7 +277,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "input_dir",
-        help="Document folder with *_orientation.npz files, "
+        help="Document folder with *_data.npz files, "
              "or parent folder if --process-subfolders is set",
     )
     parser.add_argument(

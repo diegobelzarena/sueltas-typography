@@ -409,7 +409,7 @@ def main(argv=None):
             json_file = json_dir / f"{img_file.stem}.json"
             if not json_file.exists():
                 continue
-            out_stem = str(json_dir / f"{img_file.stem}_chars")
+            out_stem = str(json_dir / f"{img_file.stem}_data")
             if args.skip_existing and os.path.exists(f"{out_stem}.npz"):
                 continue
             tasks.append((str(img_file), str(json_file), out_stem))
