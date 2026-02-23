@@ -3,11 +3,11 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "io"
+name = "sueltas-typ"
 version = "0.1.0"
-description = "I/O utilities and helper modules for the ICDAR typography project."
+description = "Full pipeline for the sueltas typography analysis article: PDF extraction, OCR (CharNet), and typographic feature computation."
 authors = [
-    { name = "Diego" }
+    { name = "Diego Belzarena" }
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
