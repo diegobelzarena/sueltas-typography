@@ -399,7 +399,7 @@ def process_style(
     # Get printer names
     print("\nStep 2/3: Mapping metadata...")
     printer_names = np.array([
-        get_printer_name(folder, metadata, config)
+        get_printer_name(folder, metadata)
         for folder in folders
     ])
     
