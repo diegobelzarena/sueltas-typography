@@ -149,20 +149,38 @@ Interactive notebooks for visualization and debugging:
 
 ### PDF to PNG Conversion
 
+Convert scanned PDFs to normalized PNG page images at a target DPI:
+
 ```bash
-python scripts/convert_pdfs.py input_pdfs/ output_imgs/ --dpi-csv-dir dpis/
+# Basic conversion
+python scripts/convert_pdfs.py data/corpus-1/pdfs data/corpus-1/imgs
+
+# With precomputed DPI values and parallel processing
+python scripts/convert_pdfs.py data/corpus-1/pdfs data/corpus-1/imgs \
+    --dpi-csv-dir data/corpus-1/dpis --workers 8 --skip-existing
+
+# Custom target DPI
+python scripts/convert_pdfs.py data/corpus-1/pdfs data/corpus-1/imgs --target-dpi 300
 ```
 
 ### DPI Estimation
 
+Compute original DPI and physical page dimensions for PDF or TIFF collections:
+
 ```bash
-python scripts/compute_dpi.py input_pdfs/ -o dpis/ --per-file
+# Single CSV report
+python scripts/compute_dpi.py data/corpus-1/pdfs -o dpi_report.csv
+
+# Per-PDF CSV files (for use with convert_pdfs.py --dpi-csv-dir)
+python scripts/compute_dpi.py data/corpus-1/pdfs -o data/corpus-1/dpis --per-file --skip-existing
 ```
 
 ### Catalogue Search
 
+Find PDFs matching catalogue signatures and optionally copy them:
+
 ```bash
-python scripts/search_pdfs.py catalogue.csv pdf_folder/ --out selected/
+python scripts/search_pdfs.py catalogue.csv data/pdfs/ --out data/selected/ --skip-existing
 ```
 
 ### Validate Pipeline Outputs
@@ -177,11 +195,11 @@ python scripts/validate_outputs.py data/corpus-1/charnet --all
 ## Repository Structure
 
 ```
-scripts/           # Pipeline entry points
+scripts/           # Pipeline entry points (self-contained)
+configs/           # YAML configuration files
 src/
   ├── charnet/     # CharNet OCR module
-  ├── image_processing/  # Orientation, segmentation, clustering
-  └── io/          # PDF/image utilities
+  └── image_processing/  # Orientation, segmentation, clustering
 notebooks/         # Visualization notebooks
 data/              # Input/output data (not tracked)
 ```
