@@ -60,10 +60,6 @@ DEFAULT_CONFIG = {
     },
     "registration": {"transform": "euclidian"},
     "distance": {"metric": "cosine"},
-    "metadata": {
-        "document_column": "Document",
-        "printer_column": "Printer",
-    },
 }
 
 
@@ -87,7 +83,7 @@ def load_config(config_path: Path | None) -> dict:
 # Metadata loading
 # ---------------------------------------------------------------------------
 
-def load_metadata(corpus_dir: Path, config: dict) -> pd.DataFrame | None:
+def load_metadata(corpus_dir: Path) -> pd.DataFrame | None:
     """Load metadata CSV from corpus directory."""
     # Look for CSV files in corpus root
     csv_files = list(corpus_dir.glob("*.csv"))
@@ -106,8 +102,8 @@ def load_metadata(corpus_dir: Path, config: dict) -> pd.DataFrame | None:
     
     try:
         df = pd.read_csv(csv_path)
-        doc_col = config["metadata"]["document_column"]
-        printer_col = config["metadata"]["printer_column"]
+        doc_col = "Document"
+        printer_col = "Printer"
         
         if doc_col not in df.columns:
             print(f"  Warning: '{doc_col}' column not found in metadata")
@@ -119,27 +115,21 @@ def load_metadata(corpus_dir: Path, config: dict) -> pd.DataFrame | None:
         return None
 
 
-def get_printer_name(doc_name: str, metadata: pd.DataFrame | None, config: dict) -> str:
+def get_printer_name(doc_name: str, metadata: pd.DataFrame | None) -> str:
     """Get printer name for a document from metadata."""
     if metadata is None:
         return "unknown"
     
-    doc_col = config["metadata"]["document_column"]
-    printer_col = config["metadata"]["printer_column"]
-    
-    if printer_col not in metadata.columns:
-        return "unknown"
-    
-    match = metadata[metadata[doc_col] == doc_name]
+    match = metadata[metadata["FileName"] == doc_name]
     if match.empty:
         # Try partial match
         for idx, row in metadata.iterrows():
-            if doc_name in str(row[doc_col]) or str(row[doc_col]) in doc_name:
-                printer = row[printer_col]
+            if doc_name in str(row["FileName"]) or str(row["FileName"]) in doc_name:
+                printer = row["Printer"]
                 return str(printer) if pd.notna(printer) else "unknown"
         return "unknown"
     
-    printer = match[printer_col].values[0]
+    printer = match["Printer"].values[0]
     return str(printer) if pd.notna(printer) else "unknown"
 
 
@@ -488,7 +478,7 @@ def main(argv=None):
     
     # Load metadata
     print("\nLoading metadata...")
-    metadata = load_metadata(corpus_dir, config)
+    metadata = load_metadata(corpus_dir)
     
     # Determine styles to process
     styles = ["roman", "italic"] if args.style == "both" else [args.style]

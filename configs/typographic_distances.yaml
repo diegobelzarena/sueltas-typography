@@ -30,10 +30,3 @@ registration:
 distance:
   # Metric for pairwise distances: cosine, euclidean, correlation
   metric: cosine
-
-# Metadata CSV column mappings
-metadata:
-  # Column name for document identifier (should match folder names)
-  document_column: Document
-  # Column name for printer/attribution
-  printer_column: Printer
