@@ -26,7 +26,8 @@ dependencies = [
     "pyclipper",
     "shapely",
     "joblib",
-    "scikit-learn"
+    "scikit-learn",
+    "pandas"
 ]
 
 [tool.setuptools.packages.find]
