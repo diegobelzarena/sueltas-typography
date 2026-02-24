@@ -109,7 +109,25 @@ python scripts/clustering.py data/corpus-1/charnet \
 
 ### Step 5 — Typographic Distance Computation
 
-*Coming soon.*
+Compare documents by computing pairwise distances between cluster centroids.
+
+```bash
+python scripts/typographic_distances.py data/corpus-1
+```
+
+This processes both roman and italic styles by default. To process a single style:
+
+```bash
+python scripts/typographic_distances.py data/corpus-1 --style roman
+```
+
+**Configuration:** Parameters can be customized via `configs/typographic_distances.yaml`.
+
+**Output:** `distances_roman.npz` and `distances_italic.npz` at corpus root containing:
+- `doc_names` — document identifiers
+- `printer_names` — printer attribution from metadata CSV
+- `adjacencies` — (n_letters, n_docs, n_docs) distance matrices per letter
+- `letters` — characters used in comparison
 
 ---
 

@@ -6,16 +6,17 @@ Runs the complete pipeline or selected steps:
   2. Character extraction via minimum cost paths
   3. Italic detection via structure tensor
   4. Unsupervised tree clustering
+  5. Typographic distance computation
 
 Usage
 -----
     # Run full pipeline on a corpus
-    python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4
+    python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4,5
 
     # Run only clustering (assumes previous steps completed)
     python scripts/run_pipeline.py data/corpus-1 --steps 4
 
-    # Run on a single document
+    # Run on a single document (steps 1-4 only)
     python scripts/run_pipeline.py data/corpus-1/imgs/doc001 --single-doc
 """
 
@@ -52,6 +53,12 @@ STEPS = {
         "name": "Tree Clustering",
         "description": "Unsupervised GMM + tree clustering",
         "output_check": lambda p: any(p["charnet"].rglob("clusters_all.npz")),
+    },
+    5: {
+        "name": "Typographic Distances",
+        "description": "Compute inter-document distances from cluster means",
+        "output_check": lambda p: (p["corpus"] / "distances_roman.npz").exists() or
+            (p["corpus"] / "distances_italic.npz").exists(),
     },
 }
 
@@ -139,11 +146,26 @@ def run_step_4(paths, workers, skip_existing):
     return result.returncode == 0, ""
 
 
+def run_step_5(paths, workers, skip_existing):
+    """Run typographic distance computation."""
+    cmd = [
+        sys.executable, "scripts/typographic_distances.py",
+        str(paths["corpus"]),
+    ]
+    if skip_existing:
+        cmd.append("--skip-existing")
+
+    print(f"  Command: {' '.join(cmd)}")
+    result = subprocess.run(cmd, cwd=paths["root"])
+    return result.returncode == 0, ""
+
+
 STEP_RUNNERS = {
     1: run_step_1,
     2: run_step_2,
     3: run_step_3,
     4: run_step_4,
+    5: run_step_5,
 }
 
 
@@ -261,13 +283,16 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run full pipeline
+  # Run per-document steps (1-4)
   python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4
 
-  # Run steps 2-4 (assumes CharNet already done)
-  python scripts/run_pipeline.py data/corpus-1 --steps 2,3,4
+  # Run full pipeline including distance computation
+  python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4,5
 
-  # Process single document
+  # Compute distances only (assumes steps 1-4 done)
+  python scripts/run_pipeline.py data/corpus-1 --steps 5
+
+  # Process single document (steps 1-4 only)
   python scripts/run_pipeline.py data/corpus-1/imgs/doc001 --single-doc --steps 1,2,3,4
         """
     )
@@ -313,9 +338,14 @@ Examples:
         steps_to_run = [int(s.strip()) for s in args.steps.split(",")]
         for s in steps_to_run:
             if s not in STEPS:
-                parser.error(f"Invalid step: {s}. Valid steps: 1,2,3,4")
+                parser.error(f"Invalid step: {s}. Valid steps: 1,2,3,4,5")
     except ValueError:
         parser.error(f"Invalid steps format: {args.steps}. Use comma-separated numbers.")
+
+    # Step 5 requires full corpus (not compatible with single-doc mode)
+    if args.single_doc and 5 in steps_to_run:
+        print("Note: Step 5 (distances) skipped in single-doc mode (requires full corpus)")
+        steps_to_run = [s for s in steps_to_run if s != 5]
 
     # Resolve paths
     paths = resolve_corpus_paths(args.input_dir, args.single_doc)

@@ -1,0 +1,39 @@
+# Configuration for typographic distance computation
+# Used by scripts/typographic_distances.py
+
+# Style-specific filtering thresholds
+roman:
+  # Maximum italic ratio to consider a cluster as roman
+  italic_max: 0.1
+  
+italic:
+  # Minimum italic ratio to consider a cluster as italic
+  italic_min: 0.4
+
+# General filtering parameters
+filtering:
+  # Minimum label confidence to include a cluster
+  label_confidence_min: 0.6
+  # Maximum number of clusters per letter per document
+  top_clusters_per_letter: 5
+  # Minimum fraction of documents that must have a letter to include it
+  min_doc_coverage: 0.33
+  # Characters to exclude from analysis
+  excluded_chars: [",", ".", ";", ":"]
+
+# Image registration
+registration:
+  # Transform type for register2mean: translation, euclidian, homothety, similarity, affinity
+  transform: euclidian
+
+# Distance computation
+distance:
+  # Metric for pairwise distances: cosine, euclidean, correlation
+  metric: cosine
+
+# Metadata CSV column mappings
+metadata:
+  # Column name for document identifier (should match folder names)
+  document_column: Document
+  # Column name for printer/attribution
+  printer_column: Printer
