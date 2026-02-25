@@ -213,7 +213,7 @@ def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
             corpus_root = input_path.parent
         
         return {
-            "root": corpus_root.parent,  # workspace root for subprocess cwd
+            "root": corpus_root.parent.parent,  # workspace root for subprocess cwd
             "corpus": corpus_root,
             "imgs": input_path,
             "charnet": corpus_root / "charnet" / input_path.name,
@@ -237,7 +237,7 @@ def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
     charnet_root = corpus_root / "charnet"
     
     return {
-        "root": corpus_root.parent,
+        "root": corpus_root.parent.parent,
         "corpus": corpus_root,
         "imgs": imgs_root,
         "charnet": charnet_root,
