@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Character clustering for documents processed by character_extraction.py.
 
@@ -26,8 +26,12 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# ---------------------------------------------------------------------------
+# Ensure the src/ packages are importable even without pip install -e .
+# ---------------------------------------------------------------------------
+_SRC = str(Path(__file__).resolve().parent.parent / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 
 from image_processing.clustering import clusterize_gmm, tree_refine
 from image_processing.tools.inverse_compositional import register2mean
@@ -188,7 +192,7 @@ def process_document(
         clu_pred_refined = tree_refine(
             imgs_filtered,
             clu_pred,
-            transform="euclidian",
+            transform="euclidean",
             min_imgs=20,
             pca_level=9,
             num_tests=5,
@@ -273,7 +277,13 @@ def process_document(
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Cluster characters from processed document pages"
+        description="Cluster characters from processed document pages",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+  python scripts/clustering.py data/corpus-1/charnet --process-subfolders --workers 4
+  python scripts/clustering.py data/corpus-1/charnet/doc001
+        """,
     )
     parser.add_argument(
         "input_dir",
@@ -332,7 +342,8 @@ def main(argv=None):
 
     print(f"\n{'='*60}")
     print(f"Total time: {time.time() - start:.2f}s")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

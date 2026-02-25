@@ -23,6 +23,8 @@ Usage
         data/corpus-1/imgs  data/corpus-1/charnet  [--workers 4]
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -369,7 +371,14 @@ def process_page(img_path: str, json_path: str, out_stem: str,
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Compute orientations and character segmentation "
-                    "for CharNet-processed document pages.")
+                    "for CharNet-processed document pages.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+  python scripts/character_extraction.py data/corpus-1/imgs data/corpus-1/charnet
+  python scripts/character_extraction.py data/corpus-1/imgs data/corpus-1/charnet --workers 4
+        """,
+    )
     parser.add_argument("image_root",
                         help="Root folder with document subfolders of PNGs")
     parser.add_argument("json_root",
@@ -377,10 +386,14 @@ def main(argv=None):
                              "(same subfolder structure)")
     parser.add_argument("--workers", type=int, default=0,
                         help="Number of parallel workers (default: ncpus-1)")
-    parser.add_argument("--window-height", type=int, default=512)
-    parser.add_argument("--window-width", type=int, default=512)
-    parser.add_argument("--step-y", type=int, default=256)
-    parser.add_argument("--step-x", type=int, default=256)
+    parser.add_argument("--window-height", type=int, default=512,
+                        help="FFT window height in pixels (default: 512)")
+    parser.add_argument("--window-width", type=int, default=512,
+                        help="FFT window width in pixels (default: 512)")
+    parser.add_argument("--step-y", type=int, default=256,
+                        help="Vertical step for sliding FFT window (default: 256)")
+    parser.add_argument("--step-x", type=int, default=256,
+                        help="Horizontal step for sliding FFT window (default: 256)")
     parser.add_argument("--padding", type=int, default=10,
                         help="Padding around words for image masking")
     parser.add_argument("--skip-existing", action="store_true",
@@ -438,7 +451,8 @@ def main(argv=None):
                 print(f"  [{done}/{len(tasks)}] {msg}")
 
     print("Done.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

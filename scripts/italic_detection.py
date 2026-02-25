@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Italic detection for documents processed by character_extraction.py.
 
@@ -19,7 +19,9 @@ import argparse
 import glob
 import json
 import os
+import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -295,7 +297,13 @@ def process_document(
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Compute italic labels for documents processed by character_extraction.py"
+        description="Compute italic labels for documents processed by character_extraction.py",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+  python scripts/italic_detection.py data/corpus-1/charnet --process-subfolders
+  python scripts/italic_detection.py data/corpus-1/charnet/doc001
+        """,
     )
     parser.add_argument(
         "input_dir",
@@ -317,9 +325,16 @@ def main(argv=None):
         action="store_true",
         help="Skip documents that already have italic_labels.npz",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Parallel workers for multi-document mode (default: ncpus-1, 0 = auto)",
+    )
     args = parser.parse_args(argv)
 
     start = time.time()
+    num_workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
 
     if args.process_subfolders:
         subfolders = sorted(
@@ -327,14 +342,33 @@ def main(argv=None):
             for d in os.listdir(args.input_dir)
             if (Path(args.input_dir) / d).is_dir()
         )
-        print(f"Processing {len(subfolders)} documents...")
-        for i, subfolder in enumerate(subfolders, 1):
-            result = process_document(
-                subfolder,
-                output_dir=args.output_dir,
-                skip_existing=args.skip_existing,
-            )
-            print(f"[{i}/{len(subfolders)}] {result}")
+        n = len(subfolders)
+        print(f"Processing {n} documents with {num_workers} workers...")
+
+        if num_workers == 1:
+            for i, subfolder in enumerate(subfolders, 1):
+                result = process_document(
+                    subfolder,
+                    output_dir=args.output_dir,
+                    skip_existing=args.skip_existing,
+                )
+                print(f"[{i}/{n}] {result}")
+        else:
+            done = 0
+            with ProcessPoolExecutor(max_workers=num_workers) as pool:
+                futures = {
+                    pool.submit(
+                        process_document,
+                        subfolder,
+                        output_dir=args.output_dir,
+                        skip_existing=args.skip_existing,
+                    ): subfolder
+                    for subfolder in subfolders
+                }
+                for fut in as_completed(futures):
+                    done += 1
+                    result = fut.result()
+                    print(f"[{done}/{n}] {result}")
     else:
         result = process_document(
             args.input_dir,
@@ -344,7 +378,8 @@ def main(argv=None):
         print(result)
 
     print(f"\nTotal time: {time.time() - start:.2f}s")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

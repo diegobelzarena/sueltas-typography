@@ -10,7 +10,7 @@ Unsupervised pipeline for extracting, clustering, and comparing typographic feat
 
 ## Installation
 
-**Requirements:** Python 3.11+, CUDA-capable GPU recommended.
+**Requirements:** Python 3.10+, CUDA-capable GPU recommended.
 
 ```bash
 pip install -r requirements.txt
@@ -101,9 +101,9 @@ python scripts/clustering.py data/corpus-1/charnet \
 ```
 
 **Output:** `clusters_all.npz` per document containing:
-- `cluster_labels` — cluster assignment per character
 - `cluster_means` — cluster centroids (40×32 images)
-- `cluster_counts` — characters per cluster
+- `cluster_labels` — per-cluster `[label, confidence, count]`
+- `cluster_italic` — mean italic ratio per cluster
 
 ---
 
@@ -142,6 +142,7 @@ Interactive notebooks for visualization and debugging:
 | `visualize_clustering.ipynb` | Browse cluster means, character assignments, and compare documents |
 | `visualize_detections.ipynb` | Browse CharNet OCR detections overlaid on page images |
 | `debug_char_segment.ipynb` | Debug character segmentation algorithm |
+| `debug_typographic_distances.ipynb` | Debug distance computation and per-letter analysis |
 
 ---
 
@@ -198,7 +199,7 @@ python scripts/validate_outputs.py data/corpus-1/charnet --all
 scripts/           # Pipeline entry points (self-contained)
 configs/           # YAML configuration files
 src/
-  ├── charnet/     # CharNet OCR module
+  ├── charnet_src/ # CharNet OCR module (third-party)
   └── image_processing/  # Orientation, segmentation, clustering
 notebooks/         # Visualization notebooks
 data/              # Input/output data (not tracked)

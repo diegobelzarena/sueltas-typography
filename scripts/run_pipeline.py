@@ -20,6 +20,8 @@ Usage
     python scripts/run_pipeline.py data/corpus-1/imgs/doc001 --single-doc
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import subprocess
@@ -95,8 +97,11 @@ def run_step_1(paths, workers, skip_existing, config_file=None):
         cmd.append("--skip-existing")
 
     print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"])
-    return result.returncode == 0, ""
+    result = subprocess.run(cmd, cwd=paths["root"],
+                           capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "unknown error").strip()
+    return True, ""
 
 
 def run_step_2(paths, workers, skip_existing):
@@ -111,8 +116,11 @@ def run_step_2(paths, workers, skip_existing):
         cmd.append("--skip-existing")
 
     print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"])
-    return result.returncode == 0, ""
+    result = subprocess.run(cmd, cwd=paths["root"],
+                           capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "unknown error").strip()
+    return True, ""
 
 
 def run_step_3(paths, workers, skip_existing):
@@ -121,13 +129,17 @@ def run_step_3(paths, workers, skip_existing):
         sys.executable, "scripts/italic_detection.py",
         str(paths["charnet"]),
         "--process-subfolders",
+        "--workers", str(workers),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
 
     print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"])
-    return result.returncode == 0, ""
+    result = subprocess.run(cmd, cwd=paths["root"],
+                           capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "unknown error").strip()
+    return True, ""
 
 
 def run_step_4(paths, workers, skip_existing):
@@ -142,8 +154,11 @@ def run_step_4(paths, workers, skip_existing):
         cmd.append("--skip-existing")
 
     print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"])
-    return result.returncode == 0, ""
+    result = subprocess.run(cmd, cwd=paths["root"],
+                           capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "unknown error").strip()
+    return True, ""
 
 
 def run_step_5(paths, workers, skip_existing):
@@ -151,13 +166,17 @@ def run_step_5(paths, workers, skip_existing):
     cmd = [
         sys.executable, "scripts/typographic_distances.py",
         str(paths["corpus"]),
+        "--workers", str(workers),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
 
     print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"])
-    return result.returncode == 0, ""
+    result = subprocess.run(cmd, cwd=paths["root"],
+                           capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "unknown error").strip()
+    return True, ""
 
 
 STEP_RUNNERS = {
@@ -282,19 +301,19 @@ def main(argv=None):
         description="Run the complete typographic analysis pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Run per-document steps (1-4)
-  python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4
+                Examples:
+                # Run per-document steps (1-4)
+                python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4
 
-  # Run full pipeline including distance computation
-  python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4,5
+                # Run full pipeline including distance computation
+                python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4,5
 
-  # Compute distances only (assumes steps 1-4 done)
-  python scripts/run_pipeline.py data/corpus-1 --steps 5
+                # Compute distances only (assumes steps 1-4 done)
+                python scripts/run_pipeline.py data/corpus-1 --steps 5
 
-  # Process single document (steps 1-4 only)
-  python scripts/run_pipeline.py data/corpus-1/imgs/doc001 --single-doc --steps 1,2,3,4
-        """
+                # Process single document (steps 1-4 only)
+                python scripts/run_pipeline.py data/corpus-1/imgs/doc001 --single-doc --steps 1,2,3,4
+                        """
     )
     parser.add_argument(
         "input_dir",

@@ -16,6 +16,8 @@ Usage
     python scripts/compute_dpi.py data/corpus-1/tiffs -o dpi_report.csv
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 import time

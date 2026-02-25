@@ -23,6 +23,8 @@ Usage
     python scripts/typographic_distances.py data/corpus-1 --config my_config.yaml
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import sys
@@ -58,7 +60,7 @@ DEFAULT_CONFIG = {
         "min_doc_coverage": 0.33,
         "excluded_chars": [",", ".", ";", ":"],
     },
-    "registration": {"transform": "euclidian"},
+    "registration": {"transform": "euclidean"},
     "distance": {"metric": "cosine"},
 }
 
@@ -366,8 +368,7 @@ def compute_distances(
     row_sums = Adj.sum(axis=(1, 2))
     nonzero_rows = row_sums != 0
     Adj = Adj[nonzero_rows]
-    valid_letters = [valid_letters[i] for i in range(len(valid_letters)) if nonzero_rows[i]]
-    
+        
     return Adj, valid_letters
 
 
@@ -432,7 +433,14 @@ def process_style(
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Compute typographic distances between documents"
+        description="Compute typographic distances between documents",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+  python scripts/typographic_distances.py data/corpus-1
+  python scripts/typographic_distances.py data/corpus-1 --style roman
+  python scripts/typographic_distances.py data/corpus-1 --config my_config.yaml
+        """,
     )
     parser.add_argument(
         "corpus_dir",

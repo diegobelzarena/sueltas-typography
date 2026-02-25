@@ -23,8 +23,8 @@ filtering:
 
 # Image registration
 registration:
-  # Transform type for register2mean: translation, euclidian, homothety, similarity, affinity
-  transform: euclidian
+  # Transform type for register2mean: translation, euclidean, homothety, similarity, affinity
+  transform: euclidean
 
 # Distance computation
 distance:

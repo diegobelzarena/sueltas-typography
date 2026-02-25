@@ -27,7 +27,11 @@ dependencies = [
     "shapely",
     "joblib",
     "scikit-learn",
-    "pandas"
+    "pandas",
+    "numpy",
+    "Pillow",
+    "scipy",
+    "pyyaml",
 ]
 
 [tool.setuptools.packages.find]

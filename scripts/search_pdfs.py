@@ -17,6 +17,8 @@ Usage
     python scripts/search_pdfs.py catalogue.csv data/pdfs/ --quiet
 """
 
+from __future__ import annotations
+
 import argparse
 import csv
 import shutil
@@ -24,8 +26,6 @@ import sys
 import time
 from glob import glob
 from pathlib import Path
-
-from tqdm import tqdm
 
 
 # ---------------------------------------------------------------------------

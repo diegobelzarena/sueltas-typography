@@ -26,9 +26,12 @@ The script pipelines three stages so that 1 GPU + N CPUs are kept busy:
    already working on the next frame.
 """
 
+from __future__ import annotations
+
 import os
 import argparse
 import json
+import sys
 import torch
 import cv2
 import numpy as np
@@ -157,7 +160,14 @@ def _load_and_resize(path, input_size, size_divisibility):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Run CharNet over a folder tree of document PNGs.")
+        description="Run CharNet over a folder tree of document PNGs.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+  python scripts/run_charnet.py configs/icdar2015_hourglass88.yaml \\
+      data/corpus-1/imgs data/corpus-1/charnet --workers 4
+        """,
+    )
     parser.add_argument("config_file", help="path to charnet config file")
     parser.add_argument("input_root",
                         help="root folder containing document subfolders with PNGs")
@@ -173,6 +183,11 @@ def main(argv=None):
     cfg.freeze()
 
     # ---- build model -------------------------------------------------------
+    if not torch.cuda.is_available():
+        print("ERROR: CUDA is not available. CharNet requires a GPU.",
+              file=sys.stderr)
+        return 1
+
     charnet = CharNet()
     charnet.load_state_dict(torch.load(cfg.WEIGHT, weights_only=True))
     charnet.eval()
@@ -281,7 +296,8 @@ def main(argv=None):
 
     prefetch_pool.shutdown(wait=False)
     print("Done.")
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

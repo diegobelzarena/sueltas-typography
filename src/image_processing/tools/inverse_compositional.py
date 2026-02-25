@@ -53,7 +53,7 @@ def p_to_psi(p: tuple[float, ...], transform: str) -> ProjectiveTransform:
         tx, ty = p
         return SimilarityTransform(translation=[tx, ty])
     
-    elif transform == 'euclidian': # Clockwise!
+    elif transform == 'euclidean': # Clockwise!
         tx, ty, theta = p
         return SimilarityTransform(rotation=theta, translation=[tx, ty])
     
@@ -98,7 +98,7 @@ def matrix_to_p(A: np.ndarray, transform: str) -> tuple[float, ...]:
     if transform == 'translation':
         return A[0, 2], A[1, 2]
     
-    elif transform == 'euclidian':
+    elif transform == 'euclidean':
         return A[0, 2], A[1, 2], np.arctan2(A[1, 0], A[1, 1])
     
     elif transform == 'homothety':
@@ -142,7 +142,7 @@ def jacobian(shape: tuple[int], transform: str) -> np.ndarray:
         J = np.zeros(shape + (2, 2))
         J[:, :, :, :] = np.eye(2)
     
-    elif transform == 'euclidian': # Clockwise!
+    elif transform == 'euclidean': # Clockwise!
         J = np.zeros(shape + (2, 3))
         J[:, :, :, :2] = np.eye(2)
         J[:, :, 0, 2] = -yy

@@ -9,6 +9,8 @@ Usage
     python scripts/validate_outputs.py data/corpus-1/charnet --all
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path
@@ -96,8 +98,8 @@ def validate_italic_npz(npz_path):
         
         if "char_italic" in data:
             italic = data["char_italic"]
-            if italic.dtype != bool:
-                errors.append(f"char_italic should be bool, got {italic.dtype}")
+            if italic.dtype not in (bool, np.bool_, np.int8):
+                errors.append(f"char_italic should be bool or int8, got {italic.dtype}")
     
     except Exception as e:
         errors.append(f"Error reading file: {e}")
@@ -108,7 +110,7 @@ def validate_italic_npz(npz_path):
 def validate_clusters_npz(npz_path):
     """Validate a clusters_all.npz file."""
     errors = []
-    required_keys = ["cluster_labels", "cluster_means", "cluster_counts", "char_labels"]
+    required_keys = ["cluster_labels", "cluster_means", "cluster_italic"]
     
     try:
         data = np.load(str(npz_path), allow_pickle=True)
@@ -125,10 +127,10 @@ def validate_clusters_npz(npz_path):
                 errors.append(f"cluster_means should be (K, 40, 32), got {means.shape}")
         
         # Check cluster count consistency
-        if all(k in data for k in ["cluster_means", "cluster_counts"]):
+        if all(k in data for k in ["cluster_means", "cluster_italic"]):
             n_clusters = len(data["cluster_means"])
-            if len(data["cluster_counts"]) != n_clusters:
-                errors.append(f"cluster_counts length mismatch")
+            if len(data["cluster_italic"]) != n_clusters:
+                errors.append(f"cluster_italic length mismatch")
     
     except Exception as e:
         errors.append(f"Error reading file: {e}")
@@ -209,14 +211,11 @@ def print_results(results):
         
         if status == "ok":
             symbol = "✓"
-            color = ""
         elif status == "missing":
             symbol = "○"
-            color = ""
             all_ok = False
         else:
             symbol = "✗"
-            color = ""
             all_ok = False
         
         files_str = f" ({step_info.get('files', 0)} files)" if "files" in step_info else ""
@@ -233,7 +232,13 @@ def print_results(results):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Validate pipeline outputs for documents"
+        description="Validate pipeline outputs for documents",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+  python scripts/validate_outputs.py data/corpus-1/charnet/doc001
+  python scripts/validate_outputs.py data/corpus-1/charnet --all
+        """,
     )
     parser.add_argument(
         "input_path",

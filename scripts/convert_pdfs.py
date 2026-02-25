@@ -20,6 +20,8 @@ Usage
         --workers 8 --skip-existing
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import statistics
@@ -37,12 +39,14 @@ from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
 # Special-case handlers
+from collections.abc import Callable
+
 # ---------------------------------------------------------------------------
 # Some PDFs have non-standard internal structure (e.g. layered scans with
 # separate text/background images and masks).  Register them here so that
 # the main extraction path stays clean.
 
-SPECIAL_CASES: dict[str, callable] = {}
+SPECIAL_CASES: dict[str, Callable] = {}
 
 
 def _register_special(name: str):
@@ -252,7 +256,7 @@ Examples:
         "--workers",
         type=int,
         default=0,
-        help="Parallel workers (default: 1, 0 = ncpus-1)",
+        help="Parallel workers (default: ncpus-1, 0 = auto)",
     )
     parser.add_argument(
         "--skip-existing",
@@ -264,7 +268,7 @@ Examples:
     pdf_dir = Path(args.pdf_dir).resolve()
     img_dir = Path(args.img_dir).resolve()
     dpi_csv_dir = Path(args.dpi_csv_dir).resolve() if args.dpi_csv_dir else None
-    workers = args.workers or 1
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
 
     # Validate
     if not pdf_dir.is_dir():
