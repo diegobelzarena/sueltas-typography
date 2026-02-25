@@ -180,7 +180,7 @@ def process_page(img_path: str, json_path: str, out_stem: str,
         word_tblrs = [w["tblr"] for w in words if "tblr" in w]
 
         # -- Step 1: bg_flatten the whole page -------------------------------
-        img_flat = bg_flatten(img, d=0, equalize=True)  # float [0, 1]
+        img_flat = bg_flatten(img, d=3, equalize=False)  # float
 
         # -- Step 2: mask non-word regions (on uint8 for FFT) ----------------
         filtered_img = filter_image_by_words(img, word_tblrs, padding=padding)
@@ -247,10 +247,16 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             # Use the bg-flattened image for char_segment
             crop, crop_t, crop_l = _crop_word(
                 img_flat, wt, wb, wl, wr, char_tblrs_page)
+            
             if crop.size == 0 or crop.shape[0] < 3 or crop.shape[1] < 3:
                 word_char_tblrs.append(np.array([]))
                 word_mask_indices.append(np.array([], dtype=np.int64))
                 continue
+            
+            # Normalize crop to [0, 1] for char_segment
+            crop_min = crop.min() if crop.size > 0 else 0
+            crop_max = crop.max() if crop.size > 0 else 1
+            crop = (crop - crop_min) / (crop_max - crop_min + 1e-8) 
 
             # Convert char tblrs to crop-local coordinates
             local_tblrs = char_tblrs_page.copy()

@@ -6,6 +6,10 @@
 
 Unsupervised pipeline for extracting, clustering, and comparing typographic features from historical printed documents.
 
+<p align="center">
+  <img src="docs/images/step6_acontrario.png" width="90%" alt="A contrario analysis results"/>
+</p>
+
 ---
 
 ## Installation
@@ -24,7 +28,7 @@ pip install -e .
 Run the complete pipeline on a corpus with a single command:
 
 ```bash
-python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4 --workers 4
+python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4,5,6 --workers 4
 ```
 
 Or run individual steps (see below for details).
@@ -56,6 +60,13 @@ python scripts/run_charnet.py configs/icdar2015_hourglass88.yaml \
 
 **Output:** `data/corpus-1/charnet/{document}/{page}.json` — word/character bounding boxes with recognition scores.
 
+<details>
+<summary>Show example output</summary>
+
+![Step 1 — CharNet detections](docs/images/step1_charnet.png)
+
+</details>
+
 ---
 
 ### Step 2 — Character Extraction via Minimum Cost Paths
@@ -74,6 +85,13 @@ python scripts/character_extraction.py \
 - `word_orientations` — page orientation per word (FFT-based)
 - `word_stroke_orientations` — stroke angle per word (structure tensor)
 
+<details>
+<summary>Show example output</summary>
+
+![Step 2 — Extracted characters](docs/images/step2_characters.png)
+
+</details>
+
 ---
 
 ### Step 3 — Italic Detection via Structure Tensor
@@ -88,6 +106,13 @@ python scripts/italic_detection.py data/corpus-1/charnet \
 **Output:** `italic_labels.npz` per document containing:
 - `char_italic` — boolean array (True = italic)
 - `threshold` — optimal separation angle
+
+<details>
+<summary>Show example output</summary>
+
+![Step 3 — Italic detection](docs/images/step3_italic.png)
+
+</details>
 
 ---
 
@@ -104,6 +129,13 @@ python scripts/clustering.py data/corpus-1/charnet \
 - `cluster_means` — cluster centroids (40×32 images)
 - `cluster_labels` — per-cluster `[label, confidence, count]`
 - `cluster_italic` — mean italic ratio per cluster
+
+<details>
+<summary>Show example output</summary>
+
+![Step 4 — Cluster means](docs/images/step4_clusters.png)
+
+</details>
 
 ---
 
@@ -129,6 +161,40 @@ python scripts/typographic_distances.py data/corpus-1 --style roman
 - `adjacencies` — (n_letters, n_docs, n_docs) distance matrices per letter
 - `letters` — characters used in comparison
 
+<details>
+<summary>Show example output</summary>
+
+![Step 5 — Distance matrix](docs/images/step5_distances.png)
+
+</details>
+
+---
+
+### Step 6 — A Contrario Analysis
+
+NFA-based detection: identify pairs of documents whose typographic similarity is
+statistically significant. Produces heatmaps and UMAP similarity graphs.
+
+```bash
+python scripts/run_acontrario.py data/corpus-1 \
+    --config configs/acontrario_corpus1.yaml
+```
+
+**Configuration:** Per-corpus YAML files in `configs/` control analysis parameters,
+printer colours, marker shapes, and figure settings.
+
+**Output:** `results/` directory in the corpus root containing:
+- `acontrario_results.npz` — n̂₁ matrices, weights, book metadata
+- `matrix_round.{png,svg}`, `matrix_cursive.{png,svg}` — heatmaps
+- `graph_round.{png,svg}`, `graph_cursive.{png,svg}` — UMAP graphs
+
+<details>
+<summary>Show example output</summary>
+
+![Step 6 — A contrario](docs/images/step6_acontrario.png)
+
+</details>
+
 ---
 
 ## Notebooks
@@ -141,6 +207,7 @@ Interactive notebooks for visualization and debugging:
 | `visualize_italic.ipynb` | Visualize italic/round classification with stroke histograms |
 | `visualize_clustering.ipynb` | Browse cluster means, character assignments, and compare documents |
 | `visualize_detections.ipynb` | Browse CharNet OCR detections overlaid on page images |
+| `acontrario.ipynb` | Interactive a contrario analysis and graph exploration |
 | `debug_char_segment.ipynb` | Debug character segmentation algorithm |
 | `debug_typographic_distances.ipynb` | Debug distance computation and per-letter analysis |
 
@@ -193,18 +260,34 @@ python scripts/validate_outputs.py data/corpus-1/charnet/doc001
 python scripts/validate_outputs.py data/corpus-1/charnet --all
 ```
 
+### Regenerate README Images
+
+```bash
+python scripts/generate_readme_images.py
+```
+
 ---
 
 ## Repository Structure
 
 ```
-scripts/           # Pipeline entry points (self-contained)
-configs/           # YAML configuration files
+scripts/                # Pipeline entry points
+  ├── run_pipeline.py   # Master pipeline (steps 1–6)
+  ├── run_charnet.py    # Step 1: CharNet OCR
+  ├── character_extraction.py   # Step 2
+  ├── italic_detection.py       # Step 3
+  ├── clustering.py             # Step 4
+  ├── typographic_distances.py  # Step 5
+  └── run_acontrario.py         # Step 6: a contrario
+configs/                # YAML configuration files
 src/
-  ├── charnet_src/ # CharNet OCR module (third-party)
-  └── image_processing/  # Orientation, segmentation, clustering
-notebooks/         # Visualization notebooks
-data/              # Input/output data (not tracked)
+  ├── acontrario/       # A contrario algorithms + visualization
+  ├── charnet_src/      # CharNet OCR module (third-party)
+  ├── image_processing/ # Orientation, segmentation, clustering
+  └── typ_distances/    # Distance utilities
+notebooks/              # Interactive visualization notebooks
+docs/images/            # README figures (auto-generated)
+data/                   # Input/output data (not tracked)
 ```
 
 ---
