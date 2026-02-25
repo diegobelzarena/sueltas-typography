@@ -117,10 +117,10 @@ def load_metadata(corpus_dir: Path) -> pd.DataFrame | None:
         return None
 
 
-def get_printer_name_and_index(doc_name: str, metadata: pd.DataFrame | None) -> tuple[str, int]:
+def get_printer_name_index_remark(doc_name: str, metadata: pd.DataFrame | None) -> tuple[str, int]:
     """Get printer name and index for a document from metadata."""
     if metadata is None:
-        return "unknown", -1
+        return "unknown", "nan", -1
     
     match = metadata[metadata["FileName"] == doc_name]
     if match.empty:
@@ -129,12 +129,14 @@ def get_printer_name_and_index(doc_name: str, metadata: pd.DataFrame | None) -> 
             if doc_name in str(row["FileName"]) or str(row["FileName"]) in doc_name:
                 printer = row["Printer"]
                 index = row["Index"]
-                return str(printer) if pd.notna(printer) else "unknown", index
-        return "unknown", -1
+                remark = row["Remarks"] if "Remarks" in row else "nan"
+                return str(printer) if pd.notna(printer) else "unknown", remark, index
+        return "unknown", "nan", -1
     
     printer = match["Printer"].values[0]
+    remark = match["Remarks"].values[0] if "Remarks" in match.columns else "nan"
     index = match["Index"].values[0]
-    return str(printer) if pd.notna(printer) else "unknown", index
+    return str(printer) if pd.notna(printer) else "unknown", remark, index
 
 
 # ---------------------------------------------------------------------------
@@ -402,11 +404,12 @@ def process_style(
     # Get printer names
     print("\nStep 2/3: Mapping metadata...")
     name_index = np.array([
-        [get_printer_name_and_index(folder, metadata)]
+        [get_printer_name_index_remark(folder, metadata)]
         for folder in folders
     ])
     printer_names = name_index[:, 0, 0]
-    indices = name_index[:, 0, 1].astype(int)
+    remarks = name_index[:, 0, 1]
+    indices = name_index[:, 0, 2].astype(int)
     
     n_known = sum(1 for p in printer_names if p != "unknown")
     print(f"  Documents with printer info: {n_known}/{len(folders)}")
@@ -430,6 +433,7 @@ def process_style(
         adjacencies=Adj,
         letters=np.array(letters),
         indices=indices,
+        remarks=remarks,
     )
     
     print(f"\n  Saved: {out_path}")
