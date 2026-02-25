@@ -7,14 +7,18 @@ Runs the complete pipeline or selected steps:
   3. Italic detection via structure tensor
   4. Unsupervised tree clustering
   5. Typographic distance computation
+  6. A contrario analysis and visualisation
 
 Usage
 -----
     # Run full pipeline on a corpus
-    python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4,5
+    python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4,5,6
 
     # Run only clustering (assumes previous steps completed)
     python scripts/run_pipeline.py data/corpus-1 --steps 4
+
+    # Run a contrario only (assumes distances computed)
+    python scripts/run_pipeline.py data/corpus-1 --steps 6
 
     # Run on a single document (steps 1-4 only)
     python scripts/run_pipeline.py data/corpus-1/imgs/doc001 --single-doc
@@ -61,6 +65,11 @@ STEPS = {
         "description": "Compute inter-document distances from cluster means",
         "output_check": lambda p: (p["corpus"] / "distances_roman.npz").exists() or
             (p["corpus"] / "distances_italic.npz").exists(),
+    },
+    6: {
+        "name": "A Contrario Analysis",
+        "description": "NFA-based detection and graph/matrix visualisation",
+        "output_check": lambda p: (p["corpus"] / "results" / "acontrario_results.npz").exists(),
     },
 }
 
@@ -166,10 +175,39 @@ def run_step_5(paths, workers, skip_existing):
     cmd = [
         sys.executable, "scripts/typographic_distances.py",
         str(paths["corpus"]),
-        "--workers", str(workers),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
+
+    print(f"  Command: {' '.join(cmd)}")
+    result = subprocess.run(cmd, cwd=paths["root"],
+                           capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "unknown error").strip()
+    return True, ""
+
+
+def run_step_6(paths, workers, skip_existing, acontrario_config=None):
+    """Run a contrario analysis."""
+    # Auto-detect config based on corpus name
+    if acontrario_config is None:
+        corpus_name = paths["corpus"].name  # e.g. "corpus-1"
+        for suffix in [corpus_name, corpus_name.replace("-", "")]:
+            candidate = paths["root"] / "configs" / f"acontrario_{suffix}.yaml"
+            if candidate.exists():
+                acontrario_config = str(candidate)
+                break
+        if acontrario_config is None:
+            return False, "Could not find a contrario config file"
+
+    cmd = [
+        sys.executable, "scripts/run_acontrario.py",
+        str(paths["corpus"]),
+        "--config", acontrario_config,
+        "--no-display",
+    ]
+    if skip_existing:
+        cmd.append("--load-results")
 
     print(f"  Command: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=paths["root"],
@@ -185,6 +223,7 @@ STEP_RUNNERS = {
     3: run_step_3,
     4: run_step_4,
     5: run_step_5,
+    6: run_step_6,
 }
 
 
@@ -322,7 +361,7 @@ def main(argv=None):
     parser.add_argument(
         "--steps",
         default="1,2,3,4",
-        help="Comma-separated list of steps to run (default: 1,2,3,4)",
+        help="Comma-separated list of steps to run (default: 1,2,3,4). Step 6: a contrario.",
     )
     parser.add_argument(
         "--single-doc",
@@ -345,6 +384,10 @@ def main(argv=None):
         help="Path to CharNet config file (auto-detected if not provided)",
     )
     parser.add_argument(
+        "--acontrario-config",
+        help="Path to a contrario YAML config (auto-detected if not provided)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be run without executing",
@@ -361,10 +404,13 @@ def main(argv=None):
     except ValueError:
         parser.error(f"Invalid steps format: {args.steps}. Use comma-separated numbers.")
 
-    # Step 5 requires full corpus (not compatible with single-doc mode)
+    # Steps 5 and 6 require full corpus (not compatible with single-doc mode)
     if args.single_doc and 5 in steps_to_run:
         print("Note: Step 5 (distances) skipped in single-doc mode (requires full corpus)")
         steps_to_run = [s for s in steps_to_run if s != 5]
+    if args.single_doc and 6 in steps_to_run:
+        print("Note: Step 6 (a contrario) skipped in single-doc mode (requires full corpus)")
+        steps_to_run = [s for s in steps_to_run if s != 6]
 
     # Resolve paths
     paths = resolve_corpus_paths(args.input_dir, args.single_doc)
@@ -401,9 +447,11 @@ def main(argv=None):
         step_start = time.time()
         runner = STEP_RUNNERS[step_num]
         
-        # Step 1 needs config file
+        # Steps with extra config arguments
         if step_num == 1:
             success, error = runner(paths, workers, args.skip_existing, args.charnet_config)
+        elif step_num == 6:
+            success, error = runner(paths, workers, args.skip_existing, args.acontrario_config)
         else:
             success, error = runner(paths, workers, args.skip_existing)
         

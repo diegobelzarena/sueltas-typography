@@ -1,0 +1,67 @@
+# A contrario analysis configuration for corpus-2
+# Used by scripts/acontrario.py
+
+# ---------------------------------------------------------------------------
+# A contrario method parameters
+# ---------------------------------------------------------------------------
+analysis:
+  # NFA threshold (equation 9 in the paper)
+  epsilon: 0.01
+  # Alpha grid: generates sorted(base * 2^i for base in base_factors, i in exponent_range)
+  alphas:
+    base_factors: [0.1, 0.15]
+    exponent_range: [-5, 3]  # inclusive on both ends
+
+# ---------------------------------------------------------------------------
+# Printer metadata (for display only — does not affect the analysis)
+# ---------------------------------------------------------------------------
+printers:
+  colors:
+    "Rodríguez de Ábrego": "tab:blue"
+    Lyra: "tab:orange"
+    unknown: "black"
+  # How to extract a short printer name from the full metadata field.
+  # "full" keeps the full name; "last_word" keeps the last token.
+  short_name: "full"
+
+remarks:
+  shapes:
+    known: "D"
+    hidden: "h"
+    new: "*"
+    nan: "s"
+
+# ---------------------------------------------------------------------------
+# Visualization
+# ---------------------------------------------------------------------------
+visualization:
+  matrix:
+    figsize_per_book: 0.2
+    include_values: false
+    cmap: "viridis"
+    xticks_rotation: "vertical"
+    colorbar: true
+    colorbar_step: 5
+
+  graph:
+    figsize: [20, 15]
+    n_neighbors: 5
+    min_dist: 1
+    n_components: 2
+    random_state: 0
+    scale_factor: 1.0
+    node_size: 24
+    font_size: 9
+    shift_dir: "nw"
+    shift_len: 0.1
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+output:
+  # Directory for figures and results (relative to corpus directory)
+  save_dir: "results"
+  # File formats for figures
+  formats: ["png", "svg"]
+  # DPI for raster formats
+  dpi: 150
