@@ -148,20 +148,22 @@ Interactive notebooks for visualization and debugging:
 
 ## Utilities
 
-### PDF to PNG Conversion
+### Source to PNG Conversion
 
-Convert scanned PDFs to normalized PNG page images at a target DPI:
+Convert scanned PDFs and/or TIFF folders to normalized PNG page images at a
+target DPI.  The input directory may contain a mix of `.pdf` files and
+subfolders of `.tif`/`.tiff` pages — both are auto-detected:
 
 ```bash
-# Basic conversion
-python scripts/convert_pdfs.py data/corpus-1/pdfs data/corpus-1/imgs
+# Basic conversion (PDFs + TIFF folders)
+python scripts/convert_sources.py data/corpus-1/pdfs data/corpus-1/imgs
 
 # With precomputed DPI values and parallel processing
-python scripts/convert_pdfs.py data/corpus-1/pdfs data/corpus-1/imgs \
+python scripts/convert_sources.py data/corpus-1/pdfs data/corpus-1/imgs \
     --dpi-csv-dir data/corpus-1/dpis --workers 8 --skip-existing
 
 # Custom target DPI
-python scripts/convert_pdfs.py data/corpus-1/pdfs data/corpus-1/imgs --target-dpi 300
+python scripts/convert_sources.py data/corpus-1/pdfs data/corpus-1/imgs --target-dpi 300
 ```
 
 ### DPI Estimation
@@ -172,7 +174,7 @@ Compute original DPI and physical page dimensions for PDF or TIFF collections:
 # Single CSV report
 python scripts/compute_dpi.py data/corpus-1/pdfs -o dpi_report.csv
 
-# Per-PDF CSV files (for use with convert_pdfs.py --dpi-csv-dir)
+# Per-source CSV files (for use with convert_sources.py --dpi-csv-dir)
 python scripts/compute_dpi.py data/corpus-1/pdfs -o data/corpus-1/dpis --per-file --skip-existing
 ```
 

@@ -9,7 +9,7 @@ Usage
     # Single CSV output for all PDFs
     python scripts/compute_dpi.py data/corpus-1/pdfs -o dpi_report.csv
 
-    # One CSV per PDF (for use with convert_pdfs.py --dpi-csv-dir)
+    # One CSV per source (for use with convert_sources.py --dpi-csv-dir)
     python scripts/compute_dpi.py data/corpus-1/pdfs -o data/corpus-1/dpis --per-file
 
     # Process TIFF folders

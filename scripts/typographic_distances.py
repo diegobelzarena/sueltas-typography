@@ -117,10 +117,10 @@ def load_metadata(corpus_dir: Path) -> pd.DataFrame | None:
         return None
 
 
-def get_printer_name(doc_name: str, metadata: pd.DataFrame | None) -> str:
-    """Get printer name for a document from metadata."""
+def get_printer_name_and_index(doc_name: str, metadata: pd.DataFrame | None) -> tuple[str, int]:
+    """Get printer name and index for a document from metadata."""
     if metadata is None:
-        return "unknown"
+        return "unknown", -1
     
     match = metadata[metadata["FileName"] == doc_name]
     if match.empty:
@@ -128,11 +128,13 @@ def get_printer_name(doc_name: str, metadata: pd.DataFrame | None) -> str:
         for idx, row in metadata.iterrows():
             if doc_name in str(row["FileName"]) or str(row["FileName"]) in doc_name:
                 printer = row["Printer"]
-                return str(printer) if pd.notna(printer) else "unknown"
-        return "unknown"
+                index = row["Index"]
+                return str(printer) if pd.notna(printer) else "unknown", index
+        return "unknown", -1
     
     printer = match["Printer"].values[0]
-    return str(printer) if pd.notna(printer) else "unknown"
+    index = match["Index"].values[0]
+    return str(printer) if pd.notna(printer) else "unknown", index
 
 
 # ---------------------------------------------------------------------------
@@ -399,10 +401,12 @@ def process_style(
     
     # Get printer names
     print("\nStep 2/3: Mapping metadata...")
-    printer_names = np.array([
-        get_printer_name(folder, metadata)
+    name_index = np.array([
+        [get_printer_name_and_index(folder, metadata)]
         for folder in folders
     ])
+    printer_names = name_index[:, 0, 0]
+    indices = name_index[:, 0, 1].astype(int)
     
     n_known = sum(1 for p in printer_names if p != "unknown")
     print(f"  Documents with printer info: {n_known}/{len(folders)}")
@@ -425,6 +429,7 @@ def process_style(
         printer_names=printer_names,
         adjacencies=Adj,
         letters=np.array(letters),
+        indices=indices,
     )
     
     print(f"\n  Saved: {out_path}")
