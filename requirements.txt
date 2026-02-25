@@ -15,9 +15,11 @@ matplotlib
 tqdm
 opencv-python
 scikit-image
-scikit-learn
+scikit-learn==1.7.1
 joblib
 editdistance
 pyclipper
 shapely
 pyyaml
+numba==0.61.2
+umap-learn==0.5.9.post2
