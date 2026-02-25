@@ -5,6 +5,7 @@
 __pycache__/
 *.py[cod]
 .env
+.venv
 
 # Jupyter
 .ipynb_checkpoints/
@@ -15,3 +16,6 @@ build/
 dist/
 *.egg-info/
 .vscode/settings.json
+
+# Outputs
+figs*/
