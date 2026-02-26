@@ -339,11 +339,10 @@ def compute_distances(
         except Exception:
             tf_means = l_imgs
         
-        # Normalize images to unit norm for cosine distance
         norms = np.linalg.norm(tf_means.reshape(len(tf_means), -1), axis=1, keepdims=True)
         print(f"Letter '{letter}': norms before: {norms.flatten()}")
         norms[norms == 0] = 1  # Avoid division by zero
-        tf_means = tf_means / norms
+        tf_means = tf_means / norms.reshape(-1, 1, 1)
         print(f"Letter '{letter}': norms after: {np.linalg.norm(tf_means.reshape(len(tf_means), -1), axis=1)}")
         
         # Compute pairwise distances
