@@ -14,12 +14,29 @@ Unsupervised pipeline for extracting, clustering, and comparing typographic feat
 
 ## Installation
 
-**Requirements:** Python 3.10+, CUDA-capable GPU recommended.
+**Requirements:** Python 3.10+, CUDA-capable GPU recommended (CPU fallback supported but slow for CharNet).
 
 ```bash
 pip install -r requirements.txt
 pip install -e .
 ```
+
+---
+
+## Configuration
+
+All configuration files live in the `configs/` directory:
+
+| File | Description |
+|------|-------------|
+| `configs/icdar2015_hourglass88.yaml` | CharNet model config (input size, model weights path, char dictionary, lexicon, detection thresholds) |
+| `configs/typographic_distances.yaml` | Typographic distance parameters (italic thresholds, filtering, registration, distance metric) |
+| `configs/acontrario_corpus1.yaml` | A contrario analysis config for corpus 1 (analysis parameters, printer colours, figure settings) |
+| `configs/acontrario_corpus2.yaml` | A contrario analysis config for corpus 2 |
+
+**CharNet config** (`configs/icdar2015_hourglass88.yaml`): Paths for `WEIGHT`, `CHAR_DICT_FILE`, and `WORD_LEXICON_PATH` are relative to `src/charnet_src/` and are resolved automatically at runtime — the repository works from any location.
+
+You can override the config file for most steps via command-line arguments (e.g., `--config`, `--charnet-config`).
 
 ---
 
@@ -51,6 +68,7 @@ data/corpus-1/imgs/
 ### Step 1 — OCR with CharNet
 
 Detect characters and words using the CharNet neural network.
+A CUDA-capable GPU is recommended; if none is available, CharNet falls back to CPU (significantly slower).
 
 ```bash
 python scripts/run_charnet.py configs/icdar2015_hourglass88.yaml \
@@ -88,7 +106,7 @@ python scripts/character_extraction.py \
 <details>
 <summary>Show example output</summary>
 
-![Step 2 — Extracted characters](docs/images/step2_characters.png)
+![Step 2 — Extracted characters](docs/images/step2_beforeafter.png)
 
 </details>
 
@@ -273,13 +291,17 @@ python scripts/generate_readme_images.py
 ```
 scripts/                # Pipeline entry points
   ├── run_pipeline.py   # Master pipeline (steps 1–6)
-  ├── run_charnet.py    # Step 1: CharNet OCR
-  ├── character_extraction.py   # Step 2
-  ├── italic_detection.py       # Step 3
-  ├── clustering.py             # Step 4
-  ├── typographic_distances.py  # Step 5
-  └── run_acontrario.py         # Step 6: a contrario
+  ├── run_charnet.py            # Step 1: CharNet OCR
+  ├── character_extraction.py   # Step 2: MCP Character Extraction
+  ├── italic_detection.py       # Step 3: Structure Tensor Italic detection
+  ├── clustering.py             # Step 4: Unsupervised Clustering
+  ├── typographic_distances.py  # Step 5: Typographic Distance Calculation
+  └── run_acontrario.py         # Step 6: A contrario Analysis
 configs/                # YAML configuration files
+  ├── icdar2015_hourglass88.yaml  # CharNet model config
+  ├── typographic_distances.yaml  # Distance computation params
+  ├── acontrario_corpus1.yaml     # A contrario (corpus 1)
+  └── acontrario_corpus2.yaml     # A contrario (corpus 2)
 src/
   ├── acontrario/       # A contrario algorithms + visualization
   ├── charnet_src/      # CharNet OCR module (third-party)
@@ -297,7 +319,7 @@ data/                   # Input/output data (not tracked)
 ```bibtex
 @inproceedings{sueltas2026,
   title={Theatre Chapbooks At Scale: A Statistical Comparative Analysis of Typography},
-  author={...},
+  author={ ...},
   booktitle={ICDAR},
   year={2026}
 }

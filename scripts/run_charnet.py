@@ -37,7 +37,7 @@ import cv2
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from collections import deque
-from charnet.config import cfg
+from charnet.config import cfg, resolve_charnet_paths
 from charnet.modeling.model import CharNet
 from charnet.modeling.postprocessing import OrientedTextPostProcessing, load_char_dict
 
@@ -182,16 +182,19 @@ Examples:
     cfg.merge_from_file(args.config_file)
     cfg.freeze()
 
-    # ---- build model -------------------------------------------------------
-    if not torch.cuda.is_available():
-        print("ERROR: CUDA is not available. CharNet requires a GPU.",
-              file=sys.stderr)
-        return 1
+    # Resolve relative paths (WEIGHT, CHAR_DICT_FILE, WORD_LEXICON_PATH)
+    # against the charnet_src root so the repo works from any directory.
+    resolve_charnet_paths(cfg)
 
-    charnet = CharNet()
-    charnet.load_state_dict(torch.load(cfg.WEIGHT, weights_only=True))
+    # ---- build model -------------------------------------------------------
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cpu":
+        print("WARNING: CUDA is not available. Running CharNet on CPU (this will be slow).")
+
+    charnet = CharNet(device=device)
+    charnet.load_state_dict(torch.load(cfg.WEIGHT, weights_only=True, map_location=device))
     charnet.eval()
-    charnet.cuda()
+    charnet.to(device)
 
     # ---- worker pool config ------------------------------------------------
     num_workers = args.workers or max(1, (os.cpu_count() or 2) - 1)

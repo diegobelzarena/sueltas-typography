@@ -78,9 +78,9 @@ def find_charnet_config():
     """Locate the default CharNet config file."""
     script_dir = Path(__file__).parent
     candidates = [
+        script_dir.parent / "configs" / "icdar2015_hourglass88.yaml",
         script_dir.parent / "src" / "charnet_src" / "configs" / "icdar2015_hourglass88.yaml",
         script_dir.parent / "src" / "charnet" / "configs" / "icdar2015_hourglass88.yaml",
-        script_dir.parent / "configs" / "icdar2015_hourglass88.yaml",
     ]
     for cfg in candidates:
         if cfg.exists():

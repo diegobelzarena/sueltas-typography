@@ -10,7 +10,7 @@ from charnet.modeling.model import CharNet
 import cv2, os
 import numpy as np
 import argparse
-from charnet.config import cfg
+from charnet.config import cfg, resolve_charnet_paths
 import matplotlib.pyplot as plt
 
 
@@ -61,12 +61,18 @@ if __name__ == '__main__':
     cfg.merge_from_file(args.config_file)
     cfg.freeze()
 
+    resolve_charnet_paths(cfg)
+
     print(cfg)
 
-    charnet = CharNet()
-    charnet.load_state_dict(torch.load(cfg.WEIGHT))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cpu":
+        print("WARNING: CUDA is not available. Running CharNet on CPU (this will be slow).")
+
+    charnet = CharNet(device=device)
+    charnet.load_state_dict(torch.load(cfg.WEIGHT, map_location=device))
     charnet.eval()
-    charnet.cuda()
+    charnet.to(device)
 
     for im_name in sorted(os.listdir(args.image_dir)):
         print("Processing {}...".format(im_name))

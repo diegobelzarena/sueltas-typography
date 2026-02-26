@@ -109,8 +109,12 @@ class CharRecognizer(nn.Module):
 
 
 class CharNet(nn.Module):
-    def __init__(self, backbone=hourglass88()):
+    def __init__(self, backbone=hourglass88(), device=None):
         super(CharNet, self).__init__()
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
         self.backbone = backbone
         decoder_channels = 256
         bottleneck_channels = 128
@@ -144,7 +148,7 @@ class CharNet(nn.Module):
         self.transform = self.build_transform()
 
     def forward(self, im, im_scale_w, im_scale_h, original_im_w, original_im_h):
-        im = self.transform(im).cuda()
+        im = self.transform(im).to(self.device)
         im = im.unsqueeze(0)
         features = self.backbone(im)
 
@@ -177,7 +181,7 @@ class CharNet(nn.Module):
         return char_bboxes, char_scores, word_instances
 
     def forward_gpu(self, im):
-        """Run only the GPU part (backbone + heads + softmax).
+        """Run the forward pass on the configured device (GPU or CPU).
 
         Parameters
         ----------
@@ -187,12 +191,19 @@ class CharNet(nn.Module):
         -------
         dict of numpy arrays ready for CPU post-processing.
         """
-        im_t = self.transform(im).cuda()
+        im_t = self.transform(im).to(self.device)
         im_t = im_t.unsqueeze(0)
 
-        # Use automatic mixed precision (FP16) to roughly halve GPU
+        use_amp = self.device.type == "cuda"
+        # Use automatic mixed precision (FP16) on CUDA to roughly halve GPU
         # memory bandwidth and increase throughput on modern GPUs.
-        with torch.cuda.amp.autocast(dtype=torch.float16):
+        if use_amp:
+            with torch.cuda.amp.autocast(dtype=torch.float16):
+                features = self.backbone(im_t)
+                pred_word_fg, pred_word_tblr, pred_word_orient = self.word_detector(features)
+                pred_char_fg, pred_char_tblr, pred_char_orient = self.char_detector(features)
+                recognition_results = self.char_recognizer(features)
+        else:
             features = self.backbone(im_t)
             pred_word_fg, pred_word_tblr, pred_word_orient = self.word_detector(features)
             pred_char_fg, pred_char_tblr, pred_char_orient = self.char_detector(features)

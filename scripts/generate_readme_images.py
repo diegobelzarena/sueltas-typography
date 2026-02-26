@@ -10,6 +10,7 @@ Usage
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from pathlib import Path
@@ -30,6 +31,26 @@ CORPUS1     = ROOT / "data" / "corpus-1"
 OUT_DIR     = ROOT / "docs" / "images"
 
 DPI = 150
+
+# ---------------------------------------------------------------------------
+# Step 4 configuration — italic cluster specimen across documents
+# ---------------------------------------------------------------------------
+# Letters to show (rows) and their order.
+STEP4_LETTERS = ["a", "e", "d", "o", "r"]
+
+# Corpus whose charnet/ folder contains the per-document clusters_all.npz.
+# Change to "corpus-2" when data is available.
+STEP4_CORPUS = ROOT / "data" / "corpus-2"
+
+# Metadata CSV with columns Index, FileName, Printer, …
+STEP4_CSV = STEP4_CORPUS / "ordered-table-corpus2.csv"
+
+# Ordered list of document folder names (columns).
+# Set to None to use every document that has cluster data, sorted by CSV index.
+STEP4_DOC_ORDER: list[str] | None = None
+
+# Maximum number of document columns to show (when STEP4_DOC_ORDER is None).
+STEP4_MAX_DOCS = 20
 
 
 def save(fig, name):
@@ -77,130 +98,428 @@ def generate_step1():
 # ===================================================================
 # Step 2 — Extracted characters
 # ===================================================================
-def generate_step2():
-    print("Step 2: Extracted characters …")
+
+def _step2_common():
+    """Load data shared by all step-2 variants."""
     npz_path = EXAMPLE_DOC / "page_10_data.npz"
     if not npz_path.exists():
-        print("  SKIP — data not found")
-        return
+        return None
+    data = np.load(str(npz_path), allow_pickle=True)
+    return data["char_imgs"], data["char_labels"]
 
+
+def generate_step2_grouped():
+    """Variant A: characters grouped by OCR label in a type-case layout."""
+    print("Step 2A: Grouped by letter …")
+    result = _step2_common()
+    if result is None:
+        print("  SKIP"); return
+    imgs, labels = result
+
+    # Pick the 8 most frequent letters
+    unique, counts = np.unique(labels, return_counts=True)
+    # Filter to alphabetic chars only
+    mask = np.array([u.isalpha() for u in unique])
+    unique, counts = unique[mask], counts[mask]
+    top_letters = unique[np.argsort(counts)[::-1]][:8]
+
+    n_per_letter = 6
+    nrows = len(top_letters)
+
+    fig, axes = plt.subplots(nrows, n_per_letter + 1, figsize=(8, nrows * 1.0),
+                             gridspec_kw={"width_ratios": [1.2] + [1]*n_per_letter,
+                                          "wspace": 0.08, "hspace": 0.25})
+    for r, letter in enumerate(top_letters):
+        # Label column
+        axes[r, 0].text(0.5, 0.5, letter, fontsize=18, ha="center", va="center",
+                        fontfamily="serif", fontweight="bold", color="#333")
+        axes[r, 0].axis("off")
+        # Character samples
+        idxs = np.where(labels == letter)[0]
+        np.random.seed(42 + r)
+        chosen = np.random.choice(idxs, min(n_per_letter, len(idxs)), replace=False)
+        for c in range(n_per_letter):
+            ax = axes[r, c + 1]
+            if c < len(chosen):
+                ax.imshow(imgs[chosen[c]], cmap="gray_r")
+            ax.set_xticks([]); ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+    fig.suptitle("Extracted character images (40×32)", fontsize=13, y=0.98,
+                 fontweight="bold", color="#222")
+    save(fig, "step2_grouped")
+
+
+def generate_step2_beforeafter():
+    """Variant B: raw crops → normalised images transformation."""
+    print("Step 2B: Before/after …")
+    npz_path = EXAMPLE_DOC / "page_10_data.npz"
+    img_path = EXAMPLE_IMG / "page_10.png"
+    json_path = EXAMPLE_DOC / "page_10.json"
+    if not all(p.exists() for p in [npz_path, img_path, json_path]):
+        print("  SKIP"); return
+
+    page_img = plt.imread(str(img_path))
+    # if page_img.ndim == 3:
+    #     page_gray = np.mean(page_img[..., :3], axis=-1)
+    # else:
+    #     page_gray = page_img
     data = np.load(str(npz_path), allow_pickle=True)
     imgs = data["char_imgs"]
     labels = data["char_labels"]
 
-    # Pick a diverse sample: first 60 characters
-    n_show = min(60, len(imgs))
-    ncols = 15
-    nrows = (n_show + ncols - 1) // ncols
+    # Choose 15 diverse characters (different labels)
+    n_show = 15
+    seen = set()
+    chosen = []
+    for i, lab in enumerate(labels):
+        if i < 100:
+            continue  # skip first few chars which are often partial/non-alpha
+        if lab.isalpha() and lab not in seen:
+            # Get raw crop from bounding box
+            word_idx = data["char_word_idx"][i]
+            key = f"char_tblrs_{word_idx}"
+            if key in data:
+                tblrs = data[key]
+                mask_key = f"mask_idx_{word_idx}"
+                if mask_key in data:
+                    mask_idx = data[mask_key]
+                    local = np.where(mask_idx == i)[0]
+                    if len(local) > 0:
+                        t, b, l, r = tblrs[local[0]]
+                        if b > t and r > l and b < page_img.shape[0] and r < page_img.shape[1]:
+                            chosen.append((i, t, b, l, r))
+                            seen.add(lab)
+            if len(chosen) >= n_show:
+                break
 
-    fig, axes = plt.subplots(nrows, ncols, figsize=(10, nrows * 0.8))
-    axes = np.atleast_2d(axes)
+    if len(chosen) < 4:
+        print("  SKIP — not enough crops found"); return
+
+    nshow = len(chosen)
+    fig, axes = plt.subplots(2, nshow, figsize=(nshow * 0.9, 2.4),
+                             gridspec_kw={"hspace": 0.15, "wspace": 0.08})
+
+    for c, (idx, t, b, l, r) in enumerate(chosen):
+        # Raw crop
+        crop = page_img[t:b, l:r]
+        axes[0, c].imshow(crop, cmap="gray", vmin=0, vmax=crop.max() if crop.max() > 0 else 1)
+        axes[0, c].set_xticks([]); axes[0, c].set_yticks([])
+        for sp in axes[0, c].spines.values():
+            sp.set_color("#bbb"); sp.set_linewidth(0.5)
+
+        # Normalised
+        axes[1, c].imshow(imgs[idx], cmap="gray_r")
+        axes[1, c].set_xticks([]); axes[1, c].set_yticks([])
+        axes[1, c].set_xlabel(labels[idx], fontsize=9, fontfamily="serif")
+        for sp in axes[1, c].spines.values():
+            sp.set_color("#bbb"); sp.set_linewidth(0.5)
+
+    axes[0, 0].set_ylabel("raw crop", fontsize=9, color="#666")
+    axes[1, 0].set_ylabel("40×32", fontsize=9, color="#666")
+    fig.suptitle("Character extraction: raw → normalised",
+                 fontsize=13, fontweight="bold", color="#222", y=1.02)
+    save(fig, "step2_beforeafter")
+
+
+def generate_step2_grid():
+    """Variant C: clean flat grid with fewer chars, better spacing."""
+    print("Step 2C: Clean grid …")
+    result = _step2_common()
+    if result is None:
+        print("  SKIP"); return
+    imgs, labels = result
+
+    # Select 40 characters, preferring variety of labels
+    np.random.seed(42)
+    unique_labels = np.unique(labels)
+    alpha = [l for l in unique_labels if l.isalpha()]
+    chosen = []
+    for lab in alpha:
+        idxs = np.where(labels == lab)[0]
+        chosen.append(np.random.choice(idxs))
+        if len(chosen) >= 40:
+            break
+    # Fill remainder randomly
+    while len(chosen) < 40:
+        i = np.random.randint(len(imgs))
+        if i not in chosen:
+            chosen.append(i)
+    chosen = chosen[:40]
+
+    ncols, nrows = 10, 4
+    fig, axes = plt.subplots(nrows, ncols, figsize=(8, 3.6),
+                             gridspec_kw={"wspace": 0.05, "hspace": 0.35})
     for i in range(nrows * ncols):
         ax = axes[i // ncols, i % ncols]
-        if i < n_show:
-            ax.imshow(imgs[i], cmap="gray_r", vmin=0, vmax=1)
-            ax.set_title(labels[i], fontsize=7, pad=1)
-        ax.set_xticks([])
-        ax.set_yticks([])
+        if i < len(chosen):
+            ax.imshow(imgs[chosen[i]], cmap="gray_r")
+            ax.set_title(labels[chosen[i]], fontsize=8, pad=2,
+                         fontfamily="serif", color="#444")
+        ax.set_xticks([]); ax.set_yticks([])
+        for sp in ax.spines.values():
+            sp.set_visible(False)
 
-    fig.suptitle("Step 2 — Extracted character images (40×32)", fontsize=12, y=1.02)
-    fig.tight_layout()
-    save(fig, "step2_characters")
+    fig.suptitle("Extracted character images (40×32)",
+                 fontsize=13, fontweight="bold", color="#222", y=0.98)
+    save(fig, "step2_grid")
+
+
+def generate_step2():
+    generate_step2_grouped()
+    generate_step2_beforeafter()
+    generate_step2_grid()
 
 
 # ===================================================================
-# Step 3 — Italic detection
+# Step 3 — Italic detection (histogram + examples)
 # ===================================================================
 def generate_step3():
-    print("Step 3: Italic detection …")
+    print("Step 3: Italic histogram + examples …")
     italic_path = EXAMPLE_DOC / "italic_labels.npz"
-    page_path = EXAMPLE_DOC / "page_10_data.npz"
-    if not italic_path.exists() or not page_path.exists():
-        print("  SKIP — data not found")
-        return
+    if not italic_path.exists():
+        print("  SKIP — data not found"); return
 
     ital = np.load(str(italic_path), allow_pickle=True)
-    page_data = np.load(str(page_path), allow_pickle=True)
+    threshold = float(ital["threshold"][0])
 
-    # Compute offset for page_10 in the document-level italic array
+    # Collect stroke orientations from all pages
+    all_strokes = []
+    all_italic_per_word = []
     page_names = list(ital["page_names"])
     page_counts = ital["page_char_counts"]
-    if "page_10" in page_names:
-        page_idx = page_names.index("page_10")
-        offset = int(page_counts[:page_idx].sum())
-        count = int(page_counts[page_idx])
-    else:
-        offset, count = 0, min(60, len(ital["char_italic"]))
 
-    italic_labels = ital["char_italic"][offset:offset + count]
-    imgs = page_data["char_imgs"][:count]
-    labels = page_data["char_labels"][:count]
+    # Also collect some example chars for display
+    roman_examples = []
+    italic_examples = []
+    char_offset = 0
 
-    # Show 30 roman, 30 italic (or as many as available)
-    np.random.seed(0)
-    roman_idx = np.where(italic_labels == 0)[0][np.random.choice(np.where(italic_labels == 0)[0].shape[0], min(30, np.sum(italic_labels == 0)), replace=False)]
-    italic_idx = np.where(italic_labels == 1)[0][np.random.choice(np.where(italic_labels == 1)[0].shape[0], min(30, np.sum(italic_labels == 1)), replace=False)]
-    
-    fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(10, 3))
+    for pname, pcount in zip(page_names, page_counts):
+        pdata_path = EXAMPLE_DOC / f"{pname}_data.npz"
+        if not pdata_path.exists():
+            char_offset += int(pcount)
+            continue
+        pdata = np.load(str(pdata_path), allow_pickle=True)
+        strokes = pdata["word_stroke_orientations"]
+        char_word_idx = pdata["char_word_idx"]
+        char_imgs = pdata["char_imgs"]
+        char_italic = ital["char_italic"][char_offset:char_offset + int(pcount)]
 
-    def _draw_row(ax, indices, title, border_color):
-        n = len(indices)
-        ax.set_xlim(0, max(n, 1))
-        ax.set_ylim(0, 1)
-        for k, idx in enumerate(indices):
-            if idx < len(imgs):
-                inset = ax.inset_axes([k / max(n, 1), 0, 1 / max(n, 1), 1])
-                inset.imshow(imgs[idx], cmap="gray_r", vmin=0, vmax=1)
-                inset.set_xticks([])
-                inset.set_yticks([])
-                for spine in inset.spines.values():
-                    spine.set_color(border_color)
-                    spine.set_linewidth(1.5)
-        ax.set_title(title, fontsize=10, color=border_color)
-        ax.axis("off")
+        # filter valid strokes
+        valid = (strokes != -360) & np.isfinite(strokes)
+        all_strokes.append(strokes[valid])
 
-    _draw_row(ax_top, roman_idx, "Roman characters", "tab:blue")
-    _draw_row(ax_bot, italic_idx, "Italic characters", "tab:red")
+        # Collect example characters
+        for ci in range(min(int(pcount), len(char_imgs))):
+            if ci >= len(char_italic):
+                break
+            if char_italic[ci] == 0 and len(roman_examples) < 15:
+                lab = pdata["char_labels"][ci] if ci < len(pdata["char_labels"]) else ""
+                if lab.isalpha():
+                    roman_examples.append(char_imgs[ci])
+            elif char_italic[ci] == 1 and len(italic_examples) < 15:
+                lab = pdata["char_labels"][ci] if ci < len(pdata["char_labels"]) else ""
+                if lab.isalpha():
+                    italic_examples.append(char_imgs[ci])
 
-    fig.suptitle("Step 3 — Italic / Roman classification", fontsize=12, y=1.04)
-    fig.tight_layout()
+        char_offset += int(pcount)
+
+    all_strokes = np.concatenate(all_strokes) if all_strokes else np.array([])
+
+    if len(all_strokes) == 0:
+        print("  SKIP — no stroke data"); return
+
+    # --- Figure: histogram on left, example chars on right ---
+    fig = plt.figure(figsize=(11, 4))
+    gs = fig.add_gridspec(2, 2, width_ratios=[1.6, 1], wspace=0.3, hspace=0.35)
+
+    # Histogram
+    ax_hist = fig.add_subplot(gs[:, 0])
+    bins = np.linspace(-50, 50, 80)
+    roman_mask = all_strokes < threshold
+    italic_mask = all_strokes >= threshold
+
+    ax_hist.hist(all_strokes[roman_mask], bins=bins, color="#4A90D9", alpha=0.7,
+                 label="Roman", edgecolor="white", linewidth=0.3)
+    ax_hist.hist(all_strokes[italic_mask], bins=bins, color="#E74C3C", alpha=0.7,
+                 label="Italic", edgecolor="white", linewidth=0.3)
+    ax_hist.axvline(threshold, color="#E74C3C", ls="--", lw=1.5, alpha=0.8)
+    ax_hist.text(threshold + 0.8, ax_hist.get_ylim()[1] * 0.92,
+                 f"θ = {threshold:.1f}°", fontsize=9, color="#E74C3C", va="top")
+
+    ax_hist.set_xlabel("Stroke orientation (degrees)", fontsize=10)
+    ax_hist.set_ylabel("Word count", fontsize=10)
+    ax_hist.legend(fontsize=9, framealpha=0.9)
+    ax_hist.spines["top"].set_visible(False)
+    ax_hist.spines["right"].set_visible(False)
+    ax_hist.set_title("Stroke angle distribution", fontsize=11,
+                      fontweight="bold", color="#222")
+
+    # Roman examples
+    ax_rom = fig.add_subplot(gs[0, 1])
+    _draw_char_strip(ax_rom, roman_examples[:12], "Roman samples", "#4A90D9")
+
+    # Italic examples
+    ax_ita = fig.add_subplot(gs[1, 1])
+    _draw_char_strip(ax_ita, italic_examples[:12], "Italic samples", "#E74C3C")
+
     save(fig, "step3_italic")
 
 
+def _draw_char_strip(ax, char_list, title, color):
+    """Draw a horizontal strip of character images inside an axes."""
+    n = len(char_list)
+    if n == 0:
+        ax.axis("off"); return
+
+    ax.set_xlim(0, n)
+    ax.set_ylim(0, 1)
+    ax.set_title(title, fontsize=10, color=color, fontweight="bold", loc="left")
+    ax.axis("off")
+
+    for k, img in enumerate(char_list):
+        inset = ax.inset_axes([k / n, 0, 0.95 / n, 1.0])
+        inset.imshow(img, cmap="gray_r")
+        inset.set_xticks([]); inset.set_yticks([])
+        for sp in inset.spines.values():
+            sp.set_color(color); sp.set_linewidth(1.2)
+
+
 # ===================================================================
-# Step 4 — Cluster means
+# Step 4 — Italic cluster specimen across documents
 # ===================================================================
+
+def _load_doc_index_map(csv_path: Path) -> dict[str, int]:
+    """Return {FileName: Index} from the ordered-table CSV."""
+    mapping: dict[str, int] = {}
+    if not csv_path.exists():
+        return mapping
+    with open(csv_path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            fname = row.get("FileName", "")
+            try:
+                mapping[fname] = int(row["Index"])
+            except (KeyError, ValueError):
+                pass
+    return mapping
+
+
+def _pick_italic_cluster(means, labels_arr, italics, letter: str):
+    """Return the cluster-mean image for the highest-count italic cluster
+    matching *letter*, or None if nothing matches."""
+    char_labels = labels_arr[:, 0]
+    counts = labels_arr[:, 2].astype(float)
+    mask = (char_labels == letter) & (italics > 0.5)
+    idxs = np.where(mask)[0]
+    if len(idxs) == 0:
+        return None
+    best = idxs[np.argmax(counts[idxs])]
+    return means[best]
+
+
 def generate_step4():
-    print("Step 4: Cluster means …")
-    cluster_path = EXAMPLE_DOC / "clusters_all.npz"
-    if not cluster_path.exists():
-        print("  SKIP — data not found")
-        return
+    """Italic-specimen grid: rows = letters, columns = documents."""
+    print("Step 4: Italic specimen grid …")
+    charnet_dir = STEP4_CORPUS / "charnet"
+    if not charnet_dir.exists():
+        print(f"  SKIP — {charnet_dir} does not exist"); return
 
-    data = np.load(str(cluster_path), allow_pickle=True)
-    means = data["cluster_means"]
-    labels = data["cluster_labels"]
+    # --- Resolve document order ------------------------------------------------
+    idx_map = _load_doc_index_map(STEP4_CSV)
 
-    # Show top 60 clusters sorted by count (column 2)
-    counts = labels[:, 2].astype(float)
-    order = np.argsort(counts)[::-1]
-    n_show = min(60, len(means))
-    ncols = 15
-    nrows = (n_show + ncols - 1) // ncols
+    if STEP4_DOC_ORDER is not None:
+        doc_dirs = [charnet_dir / d for d in STEP4_DOC_ORDER]
+    else:
+        # All docs with cluster data, sorted by CSV index (then by name)
+        doc_dirs = sorted(
+            [d for d in charnet_dir.iterdir()
+             if d.is_dir() and (d / "clusters_all.npz").exists()],
+            key=lambda d: (idx_map.get(d.name, 9999), d.name),
+        )
+        if STEP4_MAX_DOCS and len(doc_dirs) > STEP4_MAX_DOCS:
+            doc_dirs = doc_dirs[:STEP4_MAX_DOCS]
 
-    fig, axes = plt.subplots(nrows, ncols, figsize=(10, nrows * 0.8))
+    if not doc_dirs:
+        print("  SKIP — no documents found"); return
+
+    letters = STEP4_LETTERS
+    ndocs = len(doc_dirs)
+    nletters = len(letters)
+
+    # --- Build cell images -----------------------------------------------------
+    grid: list[list[np.ndarray | None]] = []  # [letter_row][doc_col]
+    for letter in letters:
+        row = []
+        for d in doc_dirs:
+            cp = d / "clusters_all.npz"
+            if not cp.exists():
+                row.append(None); continue
+            data = np.load(str(cp), allow_pickle=True)
+            img = _pick_italic_cluster(
+                data["cluster_means"], data["cluster_labels"],
+                data["cluster_italic"], letter,
+            )
+            row.append(img)
+        grid.append(row)
+
+    # --- Determine document labels (CSV index) ---------------------------------
+    doc_labels = []
+    for d in doc_dirs:
+        idx = idx_map.get(d.name)
+        doc_labels.append(str(idx) if idx is not None else d.name[:8])
+
+    # --- Draw ------------------------------------------------------------------
+    cell_px = 0.55  # inches per cell
+    label_col_w = 0.7
+    header_row_h = 0.35
+
+    fig_w = label_col_w + ndocs * cell_px + 0.3
+    fig_h = header_row_h + nletters * cell_px + 0.2
+
+    fig, axes = plt.subplots(
+        nletters, ndocs + 1,
+        figsize=(fig_w, fig_h),
+        gridspec_kw={
+            "width_ratios": [label_col_w / cell_px] + [1] * ndocs,
+            "wspace": 0.04,
+            "hspace": 0.04,
+        },
+    )
     axes = np.atleast_2d(axes)
-    for i in range(nrows * ncols):
-        ax = axes[i // ncols, i % ncols]
-        if i < n_show:
-            idx = order[i]
-            ax.imshow(means[idx], cmap="gray_r")
-            ax.set_title(f"{labels[idx, 0]}", fontsize=7, pad=1)
-        ax.set_xticks([])
-        ax.set_yticks([])
 
-    fig.suptitle("Step 4 — Cluster mean images (top 60 by count)", fontsize=12, y=1.02)
-    fig.tight_layout()
+    for r, letter in enumerate(letters):
+        # Letter label column
+        axes[r, 0].text(
+            0.6, 0.5, letter,
+            fontsize=16, ha="center", va="center",
+            fontfamily="serif", fontstyle="italic",
+            fontweight="bold", color="#333",
+        )
+        axes[r, 0].axis("off")
+
+        for c in range(ndocs):
+            ax = axes[r, c + 1]
+            img = grid[r][c]
+            if img is not None:
+                ax.imshow(img, cmap="gray_r")
+            else:
+                ax.set_facecolor("#f5f5f5")
+            ax.set_xticks([]); ax.set_yticks([])
+            for sp in ax.spines.values():
+                sp.set_visible(False)
+
+            # Document index header (first row only)
+            if r == 0:
+                ax.set_title(
+                    doc_labels[c], fontsize=6, pad=2,
+                    color="#888", fontfamily="monospace",
+                )
+
+    fig.suptitle(
+        "Italic cluster centroids across documents",
+        fontsize=12, fontweight="bold", color="#222", y=0.99,
+    )
     save(fig, "step4_clusters")
 
 
