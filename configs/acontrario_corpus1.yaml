@@ -11,6 +11,9 @@ analysis:
   alphas:
     base_factors: [0.1, 0.15]
     exponent_range: [-5, 3]  # inclusive on both ends
+  # Which weight matrix drives the book ordering and graph UMAP distances.
+  # "average" = (roman + italic) / 2, "roman" = roman only, "italic" = italic only.
+  ordering: "average"
 
 # ---------------------------------------------------------------------------
 # Printer metadata (for display only — does not affect the analysis)
@@ -46,6 +49,17 @@ visualization:
     xticks_rotation: "vertical"
     colorbar: true
     colorbar_step: 5
+    # Marker overlay style
+    marker_edge_color: "white"
+    marker_edge_width: 0.4
+    # Per-remark marker sizes (scatter `s` units; omit for default = 100)
+    marker_sizes:
+      known: 50
+      hidden: 100
+      new: 100
+    legend_marker_size: 250
+    legend_fontsize: "xx-large"
+    legend_loc: "upper right"
 
   graph:
     figsize: [12, 12]
@@ -58,6 +72,10 @@ visualization:
     font_size: 9
     shift_dir: "nw"
     shift_len: 0.1
+    edge_width: 0.5
+    legend_marker_size: 120
+    legend_fontsize: "x-large"
+    legend_loc: "upper right"
 
 # ---------------------------------------------------------------------------
 # Output

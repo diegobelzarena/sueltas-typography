@@ -69,7 +69,7 @@ def load_config(config_path: Path | None) -> dict:
     """Load configuration from YAML file, falling back to defaults."""
     config = DEFAULT_CONFIG.copy()
     if config_path and config_path.exists():
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             user_config = yaml.safe_load(f)
         if user_config:
             # Deep merge
@@ -103,7 +103,7 @@ def load_metadata(corpus_dir: Path) -> pd.DataFrame | None:
     print(f"  Loading metadata from: {csv_path.name}")
     
     try:
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path, encoding="utf-8")
         doc_col = "Document"
         printer_col = "Printer"
         

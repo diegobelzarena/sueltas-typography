@@ -60,6 +60,10 @@ DEFAULT_CONFIG: dict = {
             "base_factors": [0.1, 0.15],
             "exponent_range": [-5, 3],
         },
+        # Which weight matrix to use for the hierarchical ordering & graph
+        # distances: "average" (roman+italic)/2, "roman", or "italic".
+        # Falls back gracefully when the chosen style is unavailable.
+        "ordering": "average",
     },
     "printers": {
         "colors": {},
@@ -81,6 +85,12 @@ DEFAULT_CONFIG: dict = {
             "xticks_rotation": "vertical",
             "colorbar": True,
             "colorbar_step": 5,
+            "marker_edge_color": "white",
+            "marker_edge_width": 0.4,
+            "marker_sizes": {},
+            "legend_marker_size": 250,
+            "legend_fontsize": "xx-large",
+            "legend_loc": "upper right",
         },
         "graph": {
             "figsize": [20, 15],
@@ -93,6 +103,10 @@ DEFAULT_CONFIG: dict = {
             "font_size": 9,
             "shift_dir": "nw",
             "shift_len": 0.1,
+            "edge_width": 0.5,
+            "legend_marker_size": 120,
+            "legend_fontsize": "x-large",
+            "legend_loc": "upper right",
         },
     },
     "output": {
@@ -118,7 +132,7 @@ def load_config(config_path: Path | None) -> dict:
     """Load YAML config, falling back to built‑in defaults."""
     config = DEFAULT_CONFIG.copy()
     if config_path and config_path.exists():
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             user = yaml.safe_load(f) or {}
         config = _deep_merge(config, user)
     return config
@@ -147,11 +161,25 @@ def _intersect_books(
 def _shorten_printer_names(
     names: np.ndarray,
     mode: str = "last_word",
+    short_names: dict | None = None,
 ) -> np.ndarray:
-    """Shorten printer names for display."""
-    if mode == "last_word":
-        return np.array([n.split()[-1] if n else n for n in names])
-    return names  # "full" or unrecognised → keep as‑is
+    """Shorten printer names for display.
+
+    If *short_names* is a dict, it is used as an explicit lookup table
+    (full name → display name).  Any name not in the dict falls through
+    to the *mode* rule.
+    """
+    if short_names is None:
+        short_names = {}
+    out = []
+    for n in names:
+        if n in short_names:
+            out.append(short_names[n])
+        elif mode == "last_word" and n:
+            out.append(n.split()[-1])
+        else:
+            out.append(n)
+    return np.array(out)
 
 
 # ---------------------------------------------------------------------------
@@ -264,9 +292,16 @@ def process_corpus(
 
     # ---- Shorten printer names for display ----
     short_mode = config["printers"].get("short_name", "last_word")
-    printers = _shorten_printer_names(printers_raw, short_mode)
+    short_names = config["printers"].get("short_names", None)
+    printers = _shorten_printer_names(printers_raw, short_mode, short_names)
     printer_to_color = config["printers"].get("colors", {})
     remark_to_shape = config["remarks"]["shapes"]
+
+    # When marker_style is "simple", override all shapes to circles
+    marker_style = config["remarks"].get("marker_style", "by_remark")
+    if marker_style == "simple":
+        remark_to_shape = {k: "o" for k in remark_to_shape}
+        remark_to_shape["nan"] = "o"
 
     # ---- Load adjacencies ----
     ds_rm = ds_it = None
@@ -329,7 +364,32 @@ def process_corpus(
     w_it = (np.where(n1hat_it > 0, n1hat_it / n_it, 0)
             if n1hat_it is not None else None)
 
-    # Combined weight for ordering
+    # ---- Select weight matrix for ordering / graph distances ----
+    ordering_mode = config["analysis"].get("ordering", "average")
+    if ordering_mode == "roman":
+        if w_rm is not None:
+            w_order = w_rm
+        else:
+            print("  WARNING: ordering='roman' but no roman data; "
+                  "falling back to italic")
+            w_order = w_it
+    elif ordering_mode == "italic":
+        if w_it is not None:
+            w_order = w_it
+        else:
+            print("  WARNING: ordering='italic' but no italic data; "
+                  "falling back to roman")
+            w_order = w_rm
+    else:  # "average" (default)
+        if w_rm is not None and w_it is not None:
+            w_order = (w_rm + w_it) / 2
+        elif w_rm is not None:
+            w_order = w_rm
+        else:
+            w_order = w_it
+    print(f"  Ordering mode: {ordering_mode}")
+
+    # Combined weight for filtering isolated books (uses all available data)
     if w_rm is not None and w_it is not None:
         w_combined = w_rm + w_it
     elif w_rm is not None:
@@ -343,8 +403,8 @@ def process_corpus(
     if n_isolated:
         print(f"\n  {n_isolated} isolated book(s) removed")
 
-    metric = 1 - w_combined / (1 + (w_rm is not None and w_it is not None))
-    # Ensure metric is valid (cap at 1)
+    metric = 1 - w_order
+    # Ensure metric is valid (cap at [0, 1])
     metric = np.clip(metric, 0, 1)
     idxs_order = hierarchical_olo_order(metric)
 
@@ -380,6 +440,12 @@ def process_corpus(
                 xticks_rotation=mat_cfg["xticks_rotation"],
                 colorbar=mat_cfg["colorbar"],
                 colorbar_step=mat_cfg["colorbar_step"],
+                marker_edge_color=mat_cfg.get("marker_edge_color", "white"),
+                marker_edge_width=mat_cfg.get("marker_edge_width", 0.4),
+                marker_sizes=mat_cfg.get("marker_sizes", {}),
+                legend_marker_size=mat_cfg.get("legend_marker_size", 250),
+                legend_fontsize=mat_cfg.get("legend_fontsize", "xx-large"),
+                legend_loc=mat_cfg.get("legend_loc", "upper right"),
             )
             _save_figure(fig, f"matrix_{style_name}", save_dir, formats, dpi)
             plt.close(fig)

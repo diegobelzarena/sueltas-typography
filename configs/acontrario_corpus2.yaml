@@ -11,20 +11,30 @@ analysis:
   alphas:
     base_factors: [0.1, 0.15]
     exponent_range: [-5, 3]  # inclusive on both ends
+  # Which weight matrix drives the book ordering and graph UMAP distances.
+  # "average" = (roman + italic) / 2, "roman" = roman only, "italic" = italic only.
+  ordering: "italic"
 
 # ---------------------------------------------------------------------------
 # Printer metadata (for display only — does not affect the analysis)
 # ---------------------------------------------------------------------------
 printers:
   colors:
-    "Rodríguez de Ábrego": "tab:blue"
+    Rodríguez de Ábrego: "tab:blue"
     Lyra: "tab:orange"
     unknown: "black"
   # How to extract a short printer name from the full metadata field.
   # "full" keeps the full name; "last_word" keeps the last token.
+  # When short_names is provided, it overrides short_name for listed printers.
   short_name: "full"
+  short_names:
+    Nicolás Rodríguez de Ábrego: "Rodríguez de Ábrego"
+    Francisco de Lyra: "Lyra"
 
 remarks:
+  # "simple" = all printers get the same circle marker (no known/hidden/new distinction)
+  # "by_remark" = use different shapes per remark category (D/h/*)
+  marker_style: "simple"
   shapes:
     known: "D"
     hidden: "h"
@@ -36,24 +46,39 @@ remarks:
 # ---------------------------------------------------------------------------
 visualization:
   matrix:
-    figsize_per_book: 0.2
+    figsize_per_book: 0.4
     include_values: false
     cmap: "viridis"
     xticks_rotation: "vertical"
     colorbar: true
     colorbar_step: 5
+    # Marker overlay style (simple circles, matching notebook)
+    marker_edge_color: "white"
+    marker_edge_width: 0.2
+    marker_sizes:
+      known: 80
+      hidden: 80
+      new: 80
+      nan: 80
+    legend_marker_size: 80
+    legend_fontsize: "large"
+    legend_loc: "upper right"
 
   graph:
-    figsize: [20, 15]
-    n_neighbors: 5
+    figsize: [12, 9]
+    n_neighbors: 20
     min_dist: 1
     n_components: 2
-    random_state: 0
+    random_state: 42
     scale_factor: 1.0
     node_size: 24
     font_size: 9
     shift_dir: "nw"
-    shift_len: 0.1
+    shift_len: 0.2
+    edge_width: 0.5
+    legend_marker_size: 120
+    legend_fontsize: "x-large"
+    legend_loc: "upper left"
 
 # ---------------------------------------------------------------------------
 # Output

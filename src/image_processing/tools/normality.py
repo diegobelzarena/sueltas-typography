@@ -2,6 +2,8 @@
 #     Routledge, 2017.
 
 import math
+import warnings
+
 import numpy as np
 
 from scipy.stats import anderson, ks_1samp, norm, normaltest, shapiro
@@ -16,7 +18,13 @@ def anderson_darling(x: np.ndarray) -> float:
     Returns:
         p-value.
     """
-    A2 = anderson(x, dist='norm').statistic
+    # We only need the test statistic; the p-value is computed manually
+    # from reference tables below.  Silence the SciPy >=1.17 FutureWarning
+    # that asks callers to choose a p-value method.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning,
+                                message=".*method.*")
+        A2 = anderson(x, dist='norm').statistic
     n = len(x)
     # Modified statistic [1, Table 4.7]
     A2 = A2*(1 + (.75/n) + 2.25/(n**2))

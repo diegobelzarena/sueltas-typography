@@ -77,6 +77,12 @@ def plot_matrix(
     im_kw: dict | None = None,
     text_kw: dict | None = None,
     values_format: str | None = None,
+    marker_edge_color: str = "white",
+    marker_edge_width: float = 0.4,
+    marker_sizes: dict | None = None,
+    legend_marker_size: float = 250,
+    legend_fontsize: str = "xx-large",
+    legend_loc: str = "upper right",
 ) -> mpl.figure.Figure:
     """Discrete heatmap of a score matrix with optional printer overlays.
 
@@ -111,6 +117,9 @@ def plot_matrix(
 
     # ---- Printer / remark overlay markers ----
     if printers is not None:
+        if marker_sizes is None:
+            marker_sizes = {}
+        _default_marker_size = 100
         if printer_to_color is None:
             cmap_pr = plt.get_cmap("tab10")
             printer_to_color = {
@@ -128,10 +137,12 @@ def plot_matrix(
             remark = "known" if remark == "nan" else remark
             color = printer_to_color.get(printer, "gray")
             shape = remark_to_shape.get(remark, "o")
+            s = marker_sizes.get(remark, _default_marker_size)
             ax.scatter(
                 i, i, color=color, marker=shape, label=None,
-                edgecolors="white",
-                s=50 if shape == "D" else 100,
+                edgecolors=marker_edge_color,
+                linewidths=marker_edge_width,
+                s=s,
             )
 
     # ---- Cell values ----
@@ -176,13 +187,18 @@ def plot_matrix(
             if printer == "unknown":
                 continue
             ax.scatter([], [], color=printer_to_color.get(printer, "gray"),
-                       marker="o", label=printer, edgecolors="white", s=250)
-        for remark in ["known", "hidden", "new"]:
-            shape = remark_to_shape.get(remark, "o")
-            ax.scatter([], [], color="gray", marker=shape,
-                       label=f"$\\it{{{remark}}}$", edgecolors="white",
-                       s=150 if shape == "D" else 300)
-        ax.legend(loc="upper right", fontsize="xx-large")
+                       marker="o", label=printer, edgecolors=marker_edge_color,
+                       s=legend_marker_size, linewidths=marker_edge_width)
+        # Only show remark legend entries when shapes actually differ
+        unique_shapes = set(remark_to_shape.values())
+        if len(unique_shapes) > 1:
+            for remark in ["known", "hidden", "new"]:
+                shape = remark_to_shape.get(remark, "o")
+                ax.scatter([], [], color="gray", marker=shape,
+                           label=f"$\\it{{{remark}}}$",
+                           edgecolors=marker_edge_color,
+                           s=legend_marker_size * 0.6 if shape == "D" else legend_marker_size * 1.2)
+        ax.legend(loc=legend_loc, fontsize=legend_fontsize)
 
     ax.set_ylim((n_classes - 0.5, -0.5))
     plt.setp(ax.get_xticklabels(), rotation=xticks_rotation)
@@ -206,6 +222,10 @@ _DFLT_GRAPH_KW = dict(
     tf_geom=np.eye(2),
     cmap=None,
     figsize=(8, 8),
+    edge_width=0.5,
+    legend_marker_size=120,
+    legend_fontsize="x-large",
+    legend_loc="upper right",
 )
 
 
@@ -306,7 +326,7 @@ def plot_graph(
         ec = edge_cmap(ln)[:3]
         nx.draw_networkx_edges(
             G, dict(enumerate(pts)), edgelist=[(u, v)],
-            width=0.5, alpha=wt / wt_max, edge_color=ec, ax=ax,
+            width=kw["edge_width"], alpha=wt / wt_max, edge_color=ec, ax=ax,
         )
 
     # ---- Vertex markers ----
@@ -337,13 +357,17 @@ def plot_graph(
         if printer == "unknown":
             continue
         ax.scatter([], [], color=printer_to_color.get(printer, "gray"),
-                   marker="o", label=printer, edgecolors="white", s=120)
-    for remark in ["known", "hidden", "new"]:
-        shape = remark_to_shape.get(remark, "o")
-        ax.scatter([], [], color="gray", marker=shape,
-                   label=f"$\\it{{{remark}}}$", edgecolors="white",
-                   s=70 if shape == "D" else 150)
-    ax.legend(loc="upper right", fontsize="x-large")
+                   marker="o", label=printer, edgecolors="white",
+                   s=kw["legend_marker_size"])
+    # Only show remark legend entries when shapes actually differ
+    unique_shapes = set(remark_to_shape.values())
+    if len(unique_shapes) > 1:
+        for remark in ["known", "hidden", "new"]:
+            shape = remark_to_shape.get(remark, "o")
+            ax.scatter([], [], color="gray", marker=shape,
+                       label=f"$\\it{{{remark}}}$", edgecolors="white",
+                       s=kw["legend_marker_size"] * 0.6 if shape == "D" else kw["legend_marker_size"] * 1.25)
+    ax.legend(loc=kw["legend_loc"], fontsize=kw["legend_fontsize"])
     ax.set_aspect("auto")
     ax.axis("off")
     return fig
