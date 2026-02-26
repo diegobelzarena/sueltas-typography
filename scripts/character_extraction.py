@@ -180,7 +180,7 @@ def process_page(img_path: str, json_path: str, out_stem: str,
         word_tblrs = [w["tblr"] for w in words if "tblr" in w]
 
         # -- Step 1: bg_flatten the whole page -------------------------------
-        img_flat = bg_flatten(img, d=3, equalize=False)  # float
+        img_flat = bg_flatten(img, d=3, equalize=True)  # float
 
         # -- Step 2: mask non-word regions (on uint8 for FFT) ----------------
         filtered_img = filter_image_by_words(img, word_tblrs, padding=padding)
