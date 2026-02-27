@@ -86,8 +86,8 @@ def polygon_from_flat(coords):
 
 def make_colour_map(n, cmap_name="hsv"):
     """Return *n* distinct RGBA colours from a matplotlib colourmap."""
-    cmap = plt.cm.get_cmap(cmap_name, max(n, 1))
-    return [cmap(i) for i in range(n)]
+    cmap = plt.colormaps[cmap_name].resampled(n)
+    return [cmap(i / max(n - 1, 1)) for i in range(n)]
 
 
 def top1_label(labels_dict):
@@ -101,7 +101,7 @@ def generate_step1():
     plt.rcParams.update({
         "figure.dpi": 120,
         "font.size": 8,
-        "axes.titlesize": 11,
+        "axes.titlesize": 21,
     })
 
     print("Step 1: CharNet detections …")
@@ -152,7 +152,8 @@ def generate_step1():
     ax.set_xlim(0, img.shape[1])
     ax.set_ylim(img.shape[0], 0)
     ax.axis("off")
-    ax.set_title("Step 1 — CharNet word detections", fontsize=12)
+    ax.set_title("Step 1 — CharNet word detections", fontsize=28,
+                 fontweight="bold", color="#222",)
     save(fig, "step1_charnet")
 
 
@@ -223,7 +224,7 @@ def generate_step2_beforeafter():
 
     axes[0, 0].set_ylabel("raw crop", fontsize=9, color="#666")
     axes[1, 0].set_ylabel("40×32", fontsize=9, color="#666")
-    fig.suptitle("Character extraction: raw → normalised",
+    fig.suptitle("Step 2 - Character extraction: raw → normalised",
                  fontsize=13, fontweight="bold", color="#222", y=1.02)
     save(fig, "step2_beforeafter")
 
@@ -312,8 +313,7 @@ def generate_step3():
     ax_hist.legend(fontsize=9, framealpha=0.9)
     ax_hist.spines["top"].set_visible(False)
     ax_hist.spines["right"].set_visible(False)
-    ax_hist.set_title("Stroke angle distribution", fontsize=11,
-                      fontweight="bold", color="#222")
+    ax_hist.set_title("Stroke angle distribution", fontsize=9, color="#222")
 
     # Roman examples
     ax_rom = fig.add_subplot(gs[0, 1])
@@ -322,6 +322,9 @@ def generate_step3():
     # Italic examples
     ax_ita = fig.add_subplot(gs[1, 1])
     _draw_char_strip(ax_ita, italic_examples[:12], "Italic samples", "#E74C3C")
+
+    fig.suptitle("Step 3 - Italic Detection via Structure Tensor",
+                 fontsize=12, fontweight="bold", color="#222", y=1.02)
 
     save(fig, "step3_italic")
 
@@ -444,8 +447,40 @@ def generate_step4():
             doc_symbols.append(("*", "#999"))
 
     # --- Re-use plotting from proximity script -----------------------------
-    _plot_grid(doc_dirs, letter_grid, letters, OUT_DIR / "step4_clusters",
-               doc_labels=doc_labels, doc_symbols=doc_symbols)
+    fig4 = _plot_grid(
+        doc_dirs, letter_grid, letters, OUT_DIR / "step4_clusters",
+        doc_labels=doc_labels, doc_symbols=doc_symbols,
+        save_fig=False  # defer saving so we can tweak the figure below
+    )
+    # allow post-processing such as adding a global title
+    fig4.suptitle("Step 4 — Representative italic cluster means", fontweight="bold",
+                  fontsize=14, y=1.02, color="#222")
+
+    # --- Add legend below grid ---
+    legend_items = [
+        ("\u2020", "tab:blue", "Rodríguez de Ábrego"),
+        ("\u2021", "tab:orange", "Lyra"),
+        ("*", "#999", "Unknown")
+    ]
+    # Position legend below the grid
+    y_legend = 0.07  # relative to figure (negative = below)
+    x_start = 0.4
+    x_gap = 0.18
+    
+    fig4.text(x_start - 0.2, y_legend, "Traditional Attribution:",
+                  fontsize=11, fontweight="bold", color="gray",
+                  va="center", ha="left")
+    for i, (sym, color, label) in enumerate(legend_items):
+        if label == "Unknown":
+            x_gap = 0.13  # less gap for the last item
+        x = x_start + i * x_gap
+        fig4.text(x, y_legend, "-",
+                  fontsize=11, fontweight="bold", color="black",
+                  bbox=dict(boxstyle="circle,pad=0.2", edgecolor=color, facecolor="white", linewidth=1.5),
+                  va="center", ha="center")
+        fig4.text(x + 0.02, y_legend, label,
+                  fontsize=11, color="black", va="center", ha="left")
+    save(fig4, "step4_clusters")
 
 
 # ===================================================================
@@ -481,8 +516,8 @@ def generate_step5():
 
     fig, ax = plt.subplots(figsize=(7, 6))
     im = ax.imshow(display, cmap="viridis", vmin=0, vmax=vmax)
-    ax.set_title(f"Step 5 — Inter-document distances for letter '{target}'",
-                 fontsize=11)
+    ax.set_title(f"Step 5 — Inter-document distances for letter '{target}'", 
+                 fontweight="bold", fontsize=12, y=1.02, color="#222")
     ax.set_xlabel("Document index")
     ax.set_ylabel("Document index")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Cosine distance")
@@ -519,7 +554,7 @@ def generate_step6():
         ax.set_title(title, fontsize=11)
         ax.axis("off")
 
-    fig.suptitle("Step 6 — A contrario analysis", fontsize=13, y=1.0)
+    fig.suptitle("Step 6 — A contrario analysis", fontweight="bold", fontsize=15, y=1.02, color="#222")
     fig.tight_layout()
     save(fig, "step6_acontrario")
 

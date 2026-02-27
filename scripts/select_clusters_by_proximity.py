@@ -33,6 +33,7 @@ from typing import Iterable
 
 import numpy as np
 from sklearn.metrics.pairwise import pairwise_distances
+import matplotlib.pyplot as plt
 
 # Printer display: symbol + color, matching the LaTeX convention.
 # Keyed by the short printer name (last token of the full name).
@@ -164,7 +165,6 @@ def _choose_best_per_doc(
 
     dists = pairwise_distances(means, metric="cosine")
 
-    print(f"Strategy: {strategy}")
     if strategy == "argmin":
         counts = np.zeros(n, dtype=int)
         for i in range(n - 1):
@@ -232,14 +232,30 @@ def _plot_grid(
     doc_dirs: list[Path],
     grid: dict[str, list[np.ndarray | None]],
     letters: list[str],
-    out_path: Path,
+    out_path: Path | None = None,
     doc_labels: list[str] | None = None,
     doc_symbols: list[tuple[str, str]] | None = None,
-):
-    """Save a simple grid of selected images (like the README figure).
+    save_fig: bool = True,
+) -> plt.Figure:
+    """Create (and optionally save) a simple grid of selected images.
 
     *doc_labels* provides a string to show above each document column.
     *doc_symbols* is a list of (symbol, color) tuples matching the docs.
+
+    Parameters
+    ----------
+    out_path
+        Base path where PNG/SVG will be written.  Only used if *save_fig*
+        is ``True``; if ``None`` the figure is not written even when
+        *save_fig* is ``True``.
+    save_fig
+        If ``False``, the figure will be returned but not saved; the caller
+        can modify it (add suptitle, annotations) and save manually.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The created figure object.
     """
     import matplotlib
 
@@ -303,7 +319,7 @@ def _plot_grid(
                 # draw the index number in black with a colored circle around it
                 bbox = None
                 if sym_char:
-                    bbox = dict(boxstyle="circle,pad=0.2",
+                    bbox = dict(boxstyle=f"circle,pad={0.2 if int(num) >= 10 else 0.4}",
                                 edgecolor=sym_color, facecolor="white",
                                 linewidth=1.2)
                 ax.text(
@@ -314,13 +330,16 @@ def _plot_grid(
                     bbox=bbox,
                 )
 
-    # save in both png and svg formats
-    base = str(out_path)
-    root, ext = os.path.splitext(base)
-    for fmt in ("png", "svg"):
-        fname = root + "." + fmt
-        fig.savefig(fname, bbox_inches="tight")
-        print(f"Saved grid to {fname}")
+    # fig.tight_layout()
+    if save_fig and out_path is not None:
+        # save in both png and svg formats
+        base = str(out_path)
+        root, ext = os.path.splitext(base)
+        for fmt in ("png", "svg"):
+            fname = root + "." + fmt
+            fig.savefig(fname, bbox_inches="tight")
+            print(f"Saved grid to {fname}")
+    return fig
 
 
 
@@ -359,15 +378,12 @@ def main(argv=None):
 
     index_map = _load_doc_index_map(args.csv) if args.csv else None
     printer_map = _load_doc_printer_map(args.csv) if args.csv else {}
-    print(index_map)
-    print(len(index_map), "documents in index map")
 
     doc_dirs, grid = select_clusters(
         args.corpus, letters, italic_thresh=args.italic_threshold,
         index_map=index_map,
         strategy=args.strategy,
     )
-    print(doc_dirs)
 
     # build display labels/symbols based on metadata
     doc_labels: list[str] = []
