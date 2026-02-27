@@ -21,6 +21,16 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
+# make sure the scripts directory is importable
+import sys
+SCRIPT_DIR = Path(__file__).parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+# import helper from proximity script (including its plotting routine)
+from select_clusters_by_proximity import select_clusters, _plot_grid
+# we still use our own index/printer loaders and printer style
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -36,7 +46,7 @@ DPI = 150
 # Step 4 configuration — italic cluster specimen across documents
 # ---------------------------------------------------------------------------
 # Letters to show (rows) and their order.
-STEP4_LETTERS = ["a", "d", "e", "o", "r"]
+STEP4_LETTERS = ["a", "d", "e", "i", "l", "n", "o", "r"]
 
 # Corpus whose charnet/ folder contains the per-document clusters_all.npz.
 # Change to "corpus-2" when data is available.
@@ -50,12 +60,12 @@ STEP4_CSV = STEP4_CORPUS / "ordered-table-corpus2.csv"
 STEP4_DOC_ORDER: list[str] | None = None
 
 # Maximum number of document columns to show (when STEP4_DOC_ORDER is None).
-STEP4_MAX_DOCS = 20
+STEP4_MAX_DOCS = 21
 
 
 def save(fig, name, formats=None):
     if formats is None:
-        formats = ["png", "svg"]
+        formats = ["png"]
     for fmt in formats:
         out = OUT_DIR / f"{name}.{fmt}"
         fig.savefig(str(out), bbox_inches="tight", dpi=DPI, facecolor="white")
@@ -101,58 +111,6 @@ def generate_step1():
 # ===================================================================
 # Step 2 — Extracted characters
 # ===================================================================
-
-def _step2_common():
-    """Load data shared by all step-2 variants."""
-    npz_path = EXAMPLE_DOC / "page_10_data.npz"
-    if not npz_path.exists():
-        return None
-    data = np.load(str(npz_path), allow_pickle=True)
-    return data["char_imgs"], data["char_labels"]
-
-
-def generate_step2_grouped():
-    """Variant A: characters grouped by OCR label in a type-case layout."""
-    print("Step 2A: Grouped by letter …")
-    result = _step2_common()
-    if result is None:
-        print("  SKIP"); return
-    imgs, labels = result
-
-    # Pick the 8 most frequent letters
-    unique, counts = np.unique(labels, return_counts=True)
-    # Filter to alphabetic chars only
-    mask = np.array([u.isalpha() for u in unique])
-    unique, counts = unique[mask], counts[mask]
-    top_letters = unique[np.argsort(counts)[::-1]][:8]
-
-    n_per_letter = 6
-    nrows = len(top_letters)
-
-    fig, axes = plt.subplots(nrows, n_per_letter + 1, figsize=(8, nrows * 1.0),
-                             gridspec_kw={"width_ratios": [1.2] + [1]*n_per_letter,
-                                          "wspace": 0.08, "hspace": 0.25})
-    for r, letter in enumerate(top_letters):
-        # Label column
-        axes[r, 0].text(0.5, 0.5, letter, fontsize=18, ha="center", va="center",
-                        fontfamily="serif", fontweight="bold", color="#333")
-        axes[r, 0].axis("off")
-        # Character samples
-        idxs = np.where(labels == letter)[0]
-        np.random.seed(42 + r)
-        chosen = np.random.choice(idxs, min(n_per_letter, len(idxs)), replace=False)
-        for c in range(n_per_letter):
-            ax = axes[r, c + 1]
-            if c < len(chosen):
-                ax.imshow(imgs[chosen[c]], cmap="gray_r")
-            ax.set_xticks([]); ax.set_yticks([])
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-
-    fig.suptitle("Extracted character images (40×32)", fontsize=13, y=0.98,
-                 fontweight="bold", color="#222")
-    save(fig, "step2_grouped")
-
 
 def generate_step2_beforeafter():
     """Variant B: raw crops → normalised images transformation."""
@@ -222,54 +180,8 @@ def generate_step2_beforeafter():
     save(fig, "step2_beforeafter")
 
 
-def generate_step2_grid():
-    """Variant C: clean flat grid with fewer chars, better spacing."""
-    print("Step 2C: Clean grid …")
-    result = _step2_common()
-    if result is None:
-        print("  SKIP"); return
-    imgs, labels = result
-
-    # Select 40 characters, preferring variety of labels
-    np.random.seed(42)
-    unique_labels = np.unique(labels)
-    alpha = [l for l in unique_labels if l.isalpha()]
-    chosen = []
-    for lab in alpha:
-        idxs = np.where(labels == lab)[0]
-        chosen.append(np.random.choice(idxs))
-        if len(chosen) >= 40:
-            break
-    # Fill remainder randomly
-    while len(chosen) < 40:
-        i = np.random.randint(len(imgs))
-        if i not in chosen:
-            chosen.append(i)
-    chosen = chosen[:40]
-
-    ncols, nrows = 10, 4
-    fig, axes = plt.subplots(nrows, ncols, figsize=(8, 3.6),
-                             gridspec_kw={"wspace": 0.05, "hspace": 0.35})
-    for i in range(nrows * ncols):
-        ax = axes[i // ncols, i % ncols]
-        if i < len(chosen):
-            ax.imshow(imgs[chosen[i]], cmap="gray_r")
-            ax.set_title(labels[chosen[i]], fontsize=8, pad=2,
-                         fontfamily="serif", color="#444")
-        ax.set_xticks([]); ax.set_yticks([])
-        for sp in ax.spines.values():
-            sp.set_visible(False)
-
-    fig.suptitle("Extracted character images (40×32)",
-                 fontsize=13, fontweight="bold", color="#222", y=0.98)
-    save(fig, "step2_grid")
-
-
 def generate_step2():
-    generate_step2_grouped()
     generate_step2_beforeafter()
-    generate_step2_grid()
-
 
 # ===================================================================
 # Step 3 — Italic detection (histogram + examples)
@@ -398,7 +310,7 @@ def _load_doc_index_map(csv_path: Path) -> dict[str, int]:
         for row in csv.DictReader(f):
             fname = row.get("FileName", "")
             try:
-                mapping[fname] = int(row["Index"])
+                mapping[fname] = int(row["Index"]) - 1  # convert to 0-based
             except (KeyError, ValueError):
                 print("error")
                 pass
@@ -441,134 +353,51 @@ def _pick_italic_cluster(means, labels_arr, italics, letter: str):
 
 
 def generate_step4():
-    """Italic-specimen grid: rows = letters, columns = documents."""
+    """Italic-specimen grid: rows = letters, columns = documents.
+
+    This version simply delegates both selection and drawing to
+    `select_clusters_by_proximity`.  That script already encapsulates the
+    spacing, header font, colored circles, shortened placeholders, and
+    row‑letter removal we want, so reusing its `_plot_grid` ensures the
+    step‑4 figure exactly matches the standalone output.
+    """
     print("Step 4: Italic specimen grid …")
     charnet_dir = STEP4_CORPUS / "charnet"
     if not charnet_dir.exists():
         print(f"  SKIP — {charnet_dir} does not exist"); return
 
-    # --- Resolve document order ------------------------------------------------
+    # --- Resolve document metadata ------------------------------------------------
     idx_map = _load_doc_index_map(STEP4_CSV)
     printer_map = _load_doc_printer_map(STEP4_CSV)
 
-    if STEP4_DOC_ORDER is not None:
-        doc_dirs = [charnet_dir / d for d in STEP4_DOC_ORDER]
-    else:
-        # All docs with cluster data, sorted by CSV index (then by name)
-        doc_dirs = sorted(
-            [d for d in charnet_dir.iterdir()
-             if d.is_dir() and (d / "clusters_all.npz").exists()],
-            key=lambda d: (idx_map.get(d.name, 9999), d.name),
-        )
-        if STEP4_MAX_DOCS and len(doc_dirs) > STEP4_MAX_DOCS:
-            doc_dirs = doc_dirs[:STEP4_MAX_DOCS]
-
+    letters = STEP4_LETTERS
+    doc_dirs, letter_grid = select_clusters(
+        charnet_dir, letters, index_map=idx_map, strategy="median"
+    )
     if not doc_dirs:
         print("  SKIP — no documents found"); return
 
-    letters = STEP4_LETTERS
     ndocs = len(doc_dirs)
-    nletters = len(letters)
 
-    # --- Build cell images -----------------------------------------------------
-    grid: list[list[np.ndarray | None]] = []  # [letter_row][doc_col]
-    for letter in letters:
-        row = []
-        for d in doc_dirs:
-            cp = d / "clusters_all.npz"
-            if not cp.exists():
-                row.append(None); continue
-            data = np.load(str(cp), allow_pickle=True)
-            img = _pick_italic_cluster(
-                data["cluster_means"], data["cluster_labels"],
-                data["cluster_italic"], letter,
-            )
-            row.append(img)
-        grid.append(row)
-
-    # --- Determine doc labels, printer symbols ---------------------------------
-    doc_labels = []
-    doc_symbols = []   # (symbol_char, color) or None
+    # --- Determine doc labels & symbols using the same logic as helper -----
+    doc_labels: list[str] = []
+    doc_symbols: list[tuple[str, str]] = []
     for d in doc_dirs:
         idx = idx_map.get(d.name)
         doc_labels.append(str(idx) if idx is not None else d.name[:8])
-        # Resolve printer -> short name (last token) -> symbol+color
         full_printer = printer_map.get(d.name, "unknown")
         short = full_printer.split()[-1] if full_printer else "unknown"
         style = STEP4_PRINTER_STYLE.get(short)
         if style is not None:
             doc_symbols.append(style)
         elif full_printer != "unknown" and full_printer:
-            doc_symbols.append(("*", "black"))  # known but unlisted printer
+            doc_symbols.append(("*", "black"))
         else:
-            doc_symbols.append(("*", "#999"))   # unknown
+            doc_symbols.append(("*", "#999"))
 
-    # --- Draw ------------------------------------------------------------------
-    cell_px = 0.55  # inches per cell
-    label_col_w = 0.7
-    header_row_h = 0.35
-
-    fig_w = label_col_w + ndocs * cell_px + 0.3
-    fig_h = header_row_h + nletters * cell_px + 0.2
-
-    fig, axes = plt.subplots(
-        nletters, ndocs + 1,
-        figsize=(fig_w, fig_h),
-        gridspec_kw={
-            "width_ratios": [label_col_w / cell_px] + [1] * ndocs,
-            "wspace": 0.04,
-            "hspace": 0.04,
-        },
-    )
-    axes = np.atleast_2d(axes)
-
-    for r, letter in enumerate(letters):
-        # Letter label column
-        axes[r, 0].text(
-            0.6, 0.5, letter,
-            fontsize=16, ha="center", va="center",
-            fontfamily="serif", fontstyle="italic",
-            fontweight="bold", color="#333",
-        )
-        axes[r, 0].axis("off")
-
-        for c in range(ndocs):
-            ax = axes[r, c + 1]
-            img = grid[r][c]
-            if img is not None:
-                ax.imshow(img, cmap="gray_r")
-            else:
-                ax.set_facecolor("#f5f5f5")
-            ax.set_xticks([]); ax.set_yticks([])
-            for sp in ax.spines.values():
-                sp.set_visible(False)
-
-            # Document index header + printer symbol (first row only)
-            if r == 0:
-                sym_char, sym_color = doc_symbols[c]
-                header = f"{doc_labels[c]} {sym_char}"
-                ax.set_title(
-                    header, fontsize=6, pad=2,
-                    color=sym_color, fontfamily="monospace",
-                )
-
-    # --- Legend (bottom of figure) using Line2D markers ---
-    from matplotlib.lines import Line2D
-    legend_handles = []
-    # Collect unique printer styles in order
-    seen = set()
-    for short, (sym, clr) in STEP4_PRINTER_STYLE.items():
-        if short not in seen:
-            legend_handles.append(
-                Line2D([0], [0], marker="$" + sym + "$", color=clr,
-                       linestyle="None", markersize=8, label=short)
-            )
-            seen.add(short)
-    legend_handles.append(
-        Line2D([0], [0], marker="$*$", color="#999",
-               linestyle="None", markersize=8, label="unknown")
-    )
-    save(fig, "step4_clusters")
+    # --- Re-use plotting from proximity script -----------------------------
+    _plot_grid(doc_dirs, letter_grid, letters, OUT_DIR / "step4_clusters",
+               doc_labels=doc_labels, doc_symbols=doc_symbols)
 
 
 # ===================================================================
