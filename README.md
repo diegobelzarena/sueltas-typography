@@ -68,8 +68,13 @@ data/corpus-1/imgs/
 
 ### Step 1 — OCR with CharNet
 
-Detect characters and words using the CharNet neural network.
-A CUDA-capable GPU is recommended; if none is available, CharNet falls back to CPU (significantly slower).
+Detect characters and words using the CharNet neural network.  Before
+running, make sure the pretrained weights are present in
+`src/charnet_src/weights/icdar2015_hourglass88.pth` (see
+`src/charnet_src/README.md` for download instructions and a fallback mirror).
+
+A CUDA-capable GPU is recommended; if none is available, CharNet falls back
+to CPU (significantly slower).
 
 ```bash
 python scripts/run_charnet.py configs/icdar2015_hourglass88.yaml \
