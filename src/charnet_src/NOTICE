@@ -1,0 +1,80 @@
+NOTICE — Modified CharNet code
+===============================
+
+This directory (`src/charnet_src/`) contains source code adapted from **CharNet**
+by Malong Technologies Co., Ltd., originally published at:
+
+    https://github.com/MalongTech/research-charnet
+
+Original work
+-------------
+    Convolutional Character Networks
+    Linjie Xing, Zhi Tian, Weilin Huang, and Matthew R. Scott
+    Proceedings of the IEEE/CVF International Conference on Computer Vision
+    (ICCV), 2019.
+
+Copyright © 2014–present Malong Technologies Co., Ltd.
+Licensed under the Creative Commons Attribution-NonCommercial 4.0 International
+(CC-BY-NC-4.0) licence — see LICENSE in this directory.
+
+This adapted version retains the original licence and copyright notice.
+The pretrained model weights (downloaded via download_weights.sh) are the
+original Malong weights and are likewise subject to CC-BY-NC-4.0.
+
+
+Modifications
+-------------
+
+charnet/config/__init__.py
+    Added resolve_charnet_paths() helper: resolves the WEIGHT, CHAR_DICT_FILE,
+    and WORD_LEXICON_PATH config values against the charnet_src root directory
+    so the package runs correctly from any working directory, without requiring
+    users to launch scripts from a specific location.
+
+charnet/modeling/utils.py
+    Added rotate_rect_vectorized(): a fully-vectorised (numpy) equivalent of
+    the original rotate_rect() function, operating on N detections at once
+    instead of calling rotate_rect() inside a per-detection Python loop.
+
+charnet/modeling/rotated_nms.py
+    Added _aabb() and _aabb_overlap() helpers.
+    Modified nms() and nms_with_char_cls() to apply a fast axis-aligned
+    bounding-box (AABB) pre-filter before the expensive Shapely/pyclipper
+    polygon-intersection computation, significantly reducing NMS runtime on
+    pages with many candidate detections.
+
+charnet/modeling/postprocessing.py
+    Added BKTree and _BKNode: a BK-tree index built once over the lexicon for
+    O(log n) edit-distance lookups instead of an O(n) linear scan per word.
+    Vectorised parse_word_bboxes() and the character bbox computation using
+    numpy operations, removing the per-detection Python loop.
+    Added char_bboxes field to WordInstance (exposes per-character bounding
+    boxes for downstream typographic analysis).
+    Removed the filter_word_instances call from the forward pass (filtering
+    is handled externally).
+    Fixed numpy deprecation: np.bool → np.bool_.
+
+charnet/modeling/model.py
+    Added device parameter to CharNet.__init__() to support both CUDA and CPU
+    (the original code was hardcoded to CUDA via .cuda()).
+    Replaced the torchvision.transforms preprocessing pipeline with a custom
+    pure-numpy / torch transform that avoids the unnecessary numpy→PIL→tensor
+    round-trip of the original code.
+    Added forward_gpu(): separates the GPU/CPU inference pass (with optional
+    FP16 automatic mixed-precision on CUDA) from the CPU post-processing step,
+    allowing batch pipelining in the surrounding code.
+    Added postprocess(): convenience wrapper around OrientedTextPostProcessing
+    for use after forward_gpu().
+    Updated all .cuda() calls to .to(self.device) throughout.
+
+tools/test_net.py
+    Added CUDA/CPU auto-detection; passes device to CharNet and uses
+    map_location=device when loading weight checkpoints, so inference runs
+    on systems without a GPU.
+    Added resolve_charnet_paths(cfg) call to handle relative config paths.
+
+
+Deleted from original
+---------------------
+setup.py  — removed; installation is managed by the parent project's
+            pyproject.toml.

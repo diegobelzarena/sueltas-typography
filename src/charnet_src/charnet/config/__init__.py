@@ -1,3 +1,5 @@
+# Adapted from CharNet (Malong Technologies Co., Ltd.) under CC-BY-NC-4.0.
+# See NOTICE in the root of src/charnet_src/ for the change log.
 import os
 from pathlib import Path
 from .defaults import _C as cfg

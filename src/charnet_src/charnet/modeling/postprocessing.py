@@ -4,6 +4,7 @@
 # Contact: github@malong.com
 #
 # This source code is licensed under the LICENSE file in the root directory of this source tree.
+# Modified for sueltas-typography — see NOTICE for the change log.
 
 from torch import nn
 import numpy as np

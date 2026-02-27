@@ -315,6 +315,29 @@ data/                   # Input/output data (not tracked)
 
 ---
 
+## Third-party Code
+
+### CharNet (modified)
+
+`src/charnet_src/` contains a modified copy of
+[CharNet](https://github.com/MalongTech/research-charnet) by Malong
+Technologies Co., Ltd., used here for Step 1 (character and word detection).
+
+> Linjie Xing, Zhi Tian, Weilin Huang, Matthew R. Scott.
+> *Convolutional Character Networks.* ICCV 2019.
+
+The original code is licensed under
+[CC-BY-NC-4.0](src/charnet_src/LICENSE) — **non-commercial use only**.
+The pretrained weights downloaded via `download_weights.sh` are also subject
+to that licence.
+
+Changes made relative to the original are documented in
+[src/charnet_src/NOTICE](src/charnet_src/NOTICE) and annotated in each
+modified source file. A reference copy of the unmodified upstream source
+is kept in `research-charnet-master/` for diffing purposes.
+
+---
+
 ## Citation
 
 ```bibtex

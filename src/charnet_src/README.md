@@ -1,5 +1,9 @@
 # Convolutional Character Networks
 
+> **Modified version** — this is an adapted copy of the original CharNet repository.  
+> See [NOTICE](NOTICE) for a full list of changes from the original source.  
+> Original repository: <https://github.com/MalongTech/research-charnet>
+
 This project hosts the testing code for CharNet, described in our paper:
 
     Convolutional Character Networks
