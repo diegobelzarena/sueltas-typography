@@ -7,11 +7,11 @@ name = "sueltas-typ"
 version = "0.1.0"
 description = "Full pipeline for the sueltas typography analysis article: PDF extraction, OCR (CharNet), and typographic feature computation."
 authors = [
-    { name = "Diego Belzarena" }
+    { name = "" }
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "PyMuPDF==1.25.1",
     "torchvision",
