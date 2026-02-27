@@ -76,7 +76,34 @@ def save(fig, name, formats=None):
 # ===================================================================
 # Step 1 — CharNet OCR detections
 # ===================================================================
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+def polygon_from_flat(coords):
+    """Convert [x1,y1,x2,y2,x3,y3,x4,y4] → (4,2) array."""
+    return np.array(coords, dtype=float).reshape(4, 2)
+
+
+def make_colour_map(n, cmap_name="hsv"):
+    """Return *n* distinct RGBA colours from a matplotlib colourmap."""
+    cmap = plt.cm.get_cmap(cmap_name, max(n, 1))
+    return [cmap(i) for i in range(n)]
+
+
+def top1_label(labels_dict):
+    """Return the character with the highest score."""
+    return max(labels_dict, key=labels_dict.get)
+
+
 def generate_step1():
+    from matplotlib.patches import Polygon as MplPolygon
+    # nice defaults
+    plt.rcParams.update({
+        "figure.dpi": 120,
+        "font.size": 8,
+        "axes.titlesize": 11,
+    })
+
     print("Step 1: CharNet detections …")
     img_path = EXAMPLE_IMG / "page_10.png"
     json_path = EXAMPLE_DOC / "page_10.json"
@@ -87,19 +114,40 @@ def generate_step1():
     img = plt.imread(str(img_path))
     with open(json_path, encoding="utf-8") as f:
         detections = json.load(f)
+        
+    colours = make_colour_map(len(detections), cmap_name="tab20")
 
-    fig, ax = plt.subplots(figsize=(10, 14))
+    fig, ax = plt.subplots(figsize=(24, 24))
     ax.imshow(img, cmap="gray")
 
-    # Draw a subset of word bounding boxes
-    for det in detections[:80]:
-        t, b, l, r = det["tblr"]
-        rect = patches.Rectangle((l, t), r - l, b - t,
-                                  linewidth=0.8, edgecolor="tab:red",
-                                  facecolor="none", alpha=0.7)
-        ax.add_patch(rect)
-        ax.text(l, t - 2, det["text"], fontsize=3.5, color="tab:blue",
-                va="bottom", clip_on=True)
+    # Draw detections
+    for idx, word in enumerate(detections):
+        colour = colours[idx % len(colours)]
+
+        # ── word polygon ──
+        if "polygon" in word:
+            poly = polygon_from_flat(word["polygon"])
+            patch = MplPolygon(poly, closed=True,
+                            linewidth=2, edgecolor=colour,
+                            facecolor=(*colour[:3], 0.08))
+            ax.add_patch(patch)
+
+        # ── character polygons ──
+        for char_det in word.get("chars", []):
+            if "polygon" not in char_det:
+                continue
+            cpoly = polygon_from_flat(char_det["polygon"])
+            cpatch = MplPolygon(cpoly, closed=True,
+                                linewidth=1.0, edgecolor=colour,
+                                facecolor="none", linestyle="--")
+            ax.add_patch(cpatch)
+
+            # character label
+            ccx, ccy = cpoly.mean(axis=0)
+            lbl = top1_label(char_det["labels"])
+            ax.text(ccx, ccy - 6, lbl,
+                    fontsize=7, color='k', fontweight="bold",
+                    ha="center", va="bottom", clip_on=True)
 
     ax.set_xlim(0, img.shape[1])
     ax.set_ylim(img.shape[0], 0)
