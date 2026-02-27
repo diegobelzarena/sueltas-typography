@@ -8,6 +8,7 @@ Unsupervised pipeline for extracting, clustering, and comparing typographic feat
 
 <p align="center">
   <img src="docs/images/step6_acontrario.png" width="90%" alt="A contrario analysis results"/>
+  <img src="docs/images/step4_clusters.png" width="90%" alt="A contrario analysis results"/>
 </p>
 
 ---

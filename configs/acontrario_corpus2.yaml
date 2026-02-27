@@ -14,6 +14,11 @@ analysis:
   # Which weight matrix drives the book ordering and graph UMAP distances.
   # "average" = (roman + italic) / 2, "roman" = roman only, "italic" = italic only.
   ordering: "italic"
+  # Reference corpus for cross-corpus quantile calibration.
+  # Letters shared between both corpora use reference distances to estimate
+  # background quantiles; letters only in the target use the target's own.
+  # Set to null to estimate all quantiles from the target itself.
+  reference_corpus: "data/corpus-1"
 
 # ---------------------------------------------------------------------------
 # Printer metadata (for display only — does not affect the analysis)
@@ -69,7 +74,7 @@ visualization:
     n_neighbors: 20
     min_dist: 1
     n_components: 2
-    random_state: 42
+    random_state: 0
     scale_factor: 1.0
     node_size: 24
     font_size: 9
@@ -78,7 +83,7 @@ visualization:
     edge_width: 0.5
     legend_marker_size: 120
     legend_fontsize: "x-large"
-    legend_loc: "upper left"
+    legend_loc: "upper right"
 
 # ---------------------------------------------------------------------------
 # Output

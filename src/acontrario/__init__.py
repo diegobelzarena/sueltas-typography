@@ -86,6 +86,70 @@ def estimate_all_quantiles_(
     return qs
 
 
+def estimate_quantiles_cross_corpus(
+    ds_target: np.ndarray,
+    letters_target: np.ndarray,
+    ds_ref: np.ndarray,
+    letters_ref: np.ndarray,
+    alphas: np.ndarray,
+) -> np.ndarray:
+    """Estimate background quantiles using a reference corpus where possible.
+
+    For each letter in *letters_target*:
+
+    * If the letter also appears in *letters_ref*, the quantile is estimated
+      from the reference corpus distances (cross-corpus calibration).
+    * Otherwise, the quantile is estimated from the target corpus itself.
+
+    Parameters
+    ----------
+    ds_target : np.ndarray, shape (n_symbols_target, n_docs_target, n_docs_target)
+        Distance tensor of the target corpus.
+    letters_target : np.ndarray of str, shape (n_symbols_target,)
+        Letter labels for each slice of *ds_target*.
+    ds_ref : np.ndarray, shape (n_symbols_ref, n_docs_ref, n_docs_ref)
+        Distance tensor of the reference corpus.
+    letters_ref : np.ndarray of str, shape (n_symbols_ref,)
+        Letter labels for each slice of *ds_ref*.
+    alphas : np.ndarray, shape (n_alpha,)
+        Probability thresholds.
+
+    Returns
+    -------
+    qs : np.ndarray, shape (n_alpha, n_symbols_target)
+    """
+    # Build a lookup: letter -> index in the reference corpus
+    ref_lookup = {letter: idx for idx, letter in enumerate(letters_ref)}
+
+    ns_target = len(letters_target)
+    qs = np.zeros((len(alphas), ns_target))
+
+    n_from_ref = 0
+    n_from_self = 0
+
+    for t_idx, letter in enumerate(letters_target):
+        r_idx = ref_lookup.get(letter)
+        if r_idx is not None:
+            # Use reference corpus distances for this letter
+            d = ds_ref[r_idx]
+            inds = np.triu_indices(d.shape[0], k=1)
+            n_from_ref += 1
+        else:
+            # Letter not in reference — use target corpus itself
+            d = ds_target[t_idx]
+            inds = np.triu_indices(d.shape[0], k=1)
+            n_from_self += 1
+
+        vals = d[inds]
+        vals = vals[np.isfinite(vals)]
+        if len(vals) == 0:
+            qs[:, t_idx] = np.inf
+        else:
+            qs[:, t_idx] = np.quantile(vals, alphas)
+
+    return qs, n_from_ref, n_from_self
+
+
 # ---------------------------------------------------------------------------
 # A contrario detection
 # ---------------------------------------------------------------------------

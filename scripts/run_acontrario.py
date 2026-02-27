@@ -42,6 +42,7 @@ if _SRC not in sys.path:
 from acontrario import (
     build_alpha_grid,
     estimate_all_quantiles_,
+    estimate_quantiles_cross_corpus,
     acontrario as run_acontrario,
     hierarchical_olo_order,
     load_adjacencies,
@@ -64,6 +65,12 @@ DEFAULT_CONFIG: dict = {
         # distances: "average" (roman+italic)/2, "roman", or "italic".
         # Falls back gracefully when the chosen style is unavailable.
         "ordering": "average",
+        # Optional path to a reference corpus whose distances are used to
+        # estimate the background quantiles (cross-corpus calibration).
+        # Letters shared between both corpora use the reference; letters
+        # only in the target corpus use the target's own distances.
+        # Set to null / omit to estimate quantiles from the target itself.
+        "reference_corpus": None,
     },
     "printers": {
         "colors": {},
@@ -331,11 +338,39 @@ def process_corpus(
         n1hat_it = cached.get("n1hat_italic")
         n_it = cached.get("n_italic")
     else:
+        # ---- Optional reference corpus for cross-corpus quantiles ----
+        ref_path = acfg.get("reference_corpus")
+        ref_ds_rm = ref_letters_rm = ref_ds_it = ref_letters_it = None
+        if ref_path is not None:
+            ref_dir = Path(ref_path).resolve()
+            print(f"\n  Reference corpus: {ref_dir}")
+            ref_rm_path = ref_dir / "distances_roman.npz"
+            ref_it_path = ref_dir / "distances_italic.npz"
+            if ref_rm_path.exists():
+                ref_data_rm = np.load(str(ref_rm_path), allow_pickle=True)
+                ref_ds_rm = load_adjacencies(ref_data_rm)
+                ref_letters_rm = ref_data_rm["letters"]
+            if ref_it_path.exists():
+                ref_data_it = np.load(str(ref_it_path), allow_pickle=True)
+                ref_ds_it = load_adjacencies(ref_data_it)
+                ref_letters_it = ref_data_it["letters"]
+
+        # Target corpus letters
+        letters_rm = data_rm["letters"] if has_rm else None
+        letters_it = data_it["letters"] if has_it else None
+
         n1hat_rm = n_rm = n1hat_it = n_it = None
         if ds_rm is not None:
             print("\nRunning a contrario — roman …")
             t0 = time.time()
-            qs_rm = estimate_all_quantiles_(ds_rm, alphas=alphas)
+            if ref_ds_rm is not None and letters_rm is not None:
+                qs_rm, n_ref, n_self = estimate_quantiles_cross_corpus(
+                    ds_rm, letters_rm, ref_ds_rm, ref_letters_rm, alphas,
+                )
+                print(f"  Quantiles: {n_ref} letters from reference, "
+                      f"{n_self} from target")
+            else:
+                qs_rm = estimate_all_quantiles_(ds_rm, alphas=alphas)
             n_rm, n1hat_rm, _ = run_acontrario(
                 ds_rm, qs_rm, alphas=alphas, N=N, epsilon=epsilon,
             )
@@ -343,7 +378,14 @@ def process_corpus(
         if ds_it is not None:
             print("\nRunning a contrario — italic …")
             t0 = time.time()
-            qs_it = estimate_all_quantiles_(ds_it, alphas=alphas)
+            if ref_ds_it is not None and letters_it is not None:
+                qs_it, n_ref, n_self = estimate_quantiles_cross_corpus(
+                    ds_it, letters_it, ref_ds_it, ref_letters_it, alphas,
+                )
+                print(f"  Quantiles: {n_ref} letters from reference, "
+                      f"{n_self} from target")
+            else:
+                qs_it = estimate_all_quantiles_(ds_it, alphas=alphas)
             n_it, n1hat_it, _ = run_acontrario(
                 ds_it, qs_it, alphas=alphas, N=N, epsilon=epsilon,
             )
@@ -470,7 +512,7 @@ def process_corpus(
                 idxs=idxs_order,
                 **graph_kw,
             )
-            fig.axes[0].set_title(f"Edge strength: {style_name} score")
+            # fig.axes[0].set_title(f"Edge strength: {style_name} score")
             _save_figure(fig, f"graph_{style_name}", save_dir, formats, dpi)
             plt.close(fig)
 

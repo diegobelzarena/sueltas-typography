@@ -14,6 +14,8 @@ analysis:
   # Which weight matrix drives the book ordering and graph UMAP distances.
   # "average" = (roman + italic) / 2, "roman" = roman only, "italic" = italic only.
   ordering: "average"
+  # Reference corpus for cross-corpus quantile calibration (null = use own).
+  # reference_corpus: "data/corpus-1"
 
 # ---------------------------------------------------------------------------
 # Printer metadata (for display only — does not affect the analysis)
@@ -51,7 +53,7 @@ visualization:
     colorbar_step: 5
     # Marker overlay style
     marker_edge_color: "white"
-    marker_edge_width: 0.4
+    marker_edge_width: 1.
     # Per-remark marker sizes (scatter `s` units; omit for default = 100)
     marker_sizes:
       known: 50
@@ -63,19 +65,19 @@ visualization:
 
   graph:
     figsize: [12, 12]
-    n_neighbors: 5
+    n_neighbors: 10
     min_dist: 1
     n_components: 2
-    random_state: 42
+    random_state: 0
     scale_factor: 1.0
-    node_size: 24
+    node_size: 30
     font_size: 9
     shift_dir: "nw"
     shift_len: 0.1
     edge_width: 0.5
     legend_marker_size: 120
     legend_fontsize: "x-large"
-    legend_loc: "upper right"
+    legend_loc: "lower left"
 
 # ---------------------------------------------------------------------------
 # Output

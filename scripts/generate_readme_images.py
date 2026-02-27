@@ -36,7 +36,7 @@ DPI = 150
 # Step 4 configuration — italic cluster specimen across documents
 # ---------------------------------------------------------------------------
 # Letters to show (rows) and their order.
-STEP4_LETTERS = ["a", "e", "d", "o", "r"]
+STEP4_LETTERS = ["a", "d", "e", "o", "r"]
 
 # Corpus whose charnet/ folder contains the per-document clusters_all.npz.
 # Change to "corpus-2" when data is available.

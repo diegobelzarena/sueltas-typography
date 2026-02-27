@@ -334,10 +334,7 @@ def compute_distances(
         l_names = names[mask]
         
         # Register to mean
-        try:
-            tf_means = register2mean(l_imgs, transform=transform)
-        except Exception:
-            tf_means = l_imgs
+        tf_means = register2mean(l_imgs, transform=transform)
                 
         # Compute pairwise distances
         p_dist = pairwise_distances(
