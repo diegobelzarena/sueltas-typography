@@ -192,7 +192,7 @@ def plot_matrix(
         # Only show remark legend entries when shapes actually differ
         unique_shapes = set(remark_to_shape.values())
         if len(unique_shapes) > 1:
-            for remark in ["known", "hidden", "new"]:
+            for remark in ["known", "new"]:
                 shape = remark_to_shape.get(remark, "o")
                 ax.scatter([], [], color="gray", marker=shape,
                            label=f"$\\it{{{remark}}}$",
@@ -362,7 +362,7 @@ def plot_graph(
     # Only show remark legend entries when shapes actually differ
     unique_shapes = set(remark_to_shape.values())
     if len(unique_shapes) > 1:
-        for remark in ["known", "hidden", "new"]:
+        for remark in ["known", "new"]:
             shape = remark_to_shape.get(remark, "o")
             ax.scatter([], [], color="gray", marker=shape,
                        label=f"$\\it{{{remark}}}$", edgecolors="white",

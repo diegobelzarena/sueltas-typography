@@ -13,7 +13,11 @@ analysis:
     exponent_range: [-5, 3]  # inclusive on both ends
   # Which weight matrix drives the book ordering and graph UMAP distances.
   # "average" = (roman + italic) / 2, "roman" = roman only, "italic" = italic only.
-  ordering: "average"
+  metric: "average"
+  # How are the matrix elements ordered
+  # "hierarchical" use hierarchical order
+  # "index" = use document indices (CSV order) without reordering by weights.
+  ordering: "hierarchical"
   # Reference corpus for cross-corpus quantile calibration (null = use own).
   # reference_corpus: "data/corpus-1"
 

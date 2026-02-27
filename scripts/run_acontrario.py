@@ -296,6 +296,9 @@ def process_corpus(
         idxs_it = np.arange(len(books))
 
     print(f"  Books: {len(books)}")
+    
+    # Change all "hidden" remarks to "known" since we don't distinguish them in the visualisation
+    remarks = np.where(remarks == "hidden", "known", remarks)
 
     # ---- Shorten printer names for display ----
     short_mode = config["printers"].get("short_name", "last_word")
@@ -407,15 +410,16 @@ def process_corpus(
             if n1hat_it is not None else None)
 
     # ---- Select weight matrix for ordering / graph distances ----
-    ordering_mode = config["analysis"].get("ordering", "average")
-    if ordering_mode == "roman":
+    ordering_mode = config["analysis"].get("ordering", "hierarchical")
+    metric_mode = config["analysis"].get("metric", "average")  # "ordering" or "combined"
+    if metric_mode == "roman":
         if w_rm is not None:
             w_order = w_rm
         else:
             print("  WARNING: ordering='roman' but no roman data; "
                   "falling back to italic")
             w_order = w_it
-    elif ordering_mode == "italic":
+    elif metric_mode == "italic":
         if w_it is not None:
             w_order = w_it
         else:
@@ -429,7 +433,7 @@ def process_corpus(
             w_order = w_rm
         else:
             w_order = w_it
-    print(f"  Ordering mode: {ordering_mode}")
+    print(f"  Metric mode: {metric_mode}")
 
     # Combined weight for filtering isolated books (uses all available data)
     if w_rm is not None and w_it is not None:
@@ -448,7 +452,16 @@ def process_corpus(
     metric = 1 - w_order
     # Ensure metric is valid (cap at [0, 1])
     metric = np.clip(metric, 0, 1)
-    idxs_order = hierarchical_olo_order(metric)
+    if ordering_mode == "hierarchical":
+        idxs_order = hierarchical_olo_order(metric)
+        rel_order = np.array([np.argwhere(idxs_order == i)[0, 0] for i in range(len(books))])
+    else:
+        idxs_order = np.array(csv_indices, dtype=int) - 1  # use original CSV order (minus 1 for 0‑based)
+        rel_order = idxs_order.copy()
+        idxs_order = [np.argwhere(idxs_order == i)[0, 0] for i in range(len(books))]  # sort by CSV order
+        
+    idxs_order = np.array(idxs_order)
+    rel_order = np.array(rel_order)
 
     # ---- Plotting ----
     vis = config["visualization"]
@@ -502,7 +515,7 @@ def process_corpus(
 
         for style_name, _, weights in style_data:
             fig = plot_graph(
-                csv_indices - 1,
+                rel_order,
                 dists,
                 weights,
                 printers=printers,

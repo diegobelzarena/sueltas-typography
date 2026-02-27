@@ -203,7 +203,9 @@ python scripts/run_acontrario.py data/corpus-1 \
 ```
 
 **Configuration:** Per-corpus YAML files in `configs/` control analysis parameters,
-printer colours, marker shapes, and figure settings.
+printer colours, marker shapes, and figure settings.  The `ordering` field
+(average/roman/italic/index) selects how books are arranged; `index` simply uses
+document indices without reordering by typographic weights.
 
 **Output:** `results/` directory in the corpus root containing:
 - `acontrario_results.npz` — n̂₁ matrices, weights, book metadata
