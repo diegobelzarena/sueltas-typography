@@ -1,7 +1,5 @@
-# Sueltas Typography
+# Theatre Chapbooks At Scale: A Statistical Comparative Analysis of Typography
 
-> **Theatre Chapbooks At Scale: A Statistical Comparative Analysis of Typography**
->
 > Official implementation — ICDAR 2026
 
 Unsupervised pipeline for extracting, clustering, and comparing typographic features from historical printed documents.
