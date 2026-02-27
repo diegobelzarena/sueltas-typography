@@ -234,15 +234,15 @@ STEP_RUNNERS = {
 def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
     """
     Resolve the standard corpus directory structure.
-    
+
     For a corpus like data/corpus-1/:
         imgs/      -> document images
         charnet/   -> CharNet outputs + extraction outputs
-    
+
     For single document mode, input_path points directly to a document folder.
     """
     input_path = Path(input_path).resolve()
-    
+
     if single_doc:
         # input_path is the document folder itself (e.g., data/corpus-1/imgs/doc001)
         # Infer corpus root from imgs parent
@@ -250,7 +250,7 @@ def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
             corpus_root = input_path.parent.parent
         else:
             corpus_root = input_path.parent
-        
+
         return {
             "root": corpus_root.parent.parent,  # workspace root for subprocess cwd
             "corpus": corpus_root,
@@ -258,7 +258,7 @@ def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
             "charnet": corpus_root / "charnet" / input_path.name,
             "single_doc": True,
         }
-    
+
     # Standard corpus mode
     # Check if input_path is the corpus root or imgs subfolder
     if (input_path / "imgs").is_dir():
@@ -271,10 +271,10 @@ def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
         # Assume it's the corpus root without imgs/ subfolder
         corpus_root = input_path
         imgs_root = input_path
-    
+
     # CharNet output goes to charnet/ sibling of imgs/
     charnet_root = corpus_root / "charnet"
-    
+
     return {
         "root": corpus_root.parent.parent,
         "corpus": corpus_root,
@@ -287,12 +287,12 @@ def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
 def validate_paths(paths):
     """Check that required directories exist."""
     errors = []
-    
+
     if not paths["imgs"].is_dir():
         errors.append(f"Images directory not found: {paths['imgs']}")
     elif not any(paths["imgs"].iterdir()):
         errors.append(f"Images directory is empty: {paths['imgs']}")
-    
+
     return errors
 
 
@@ -308,13 +308,13 @@ def print_status(paths, steps_to_run):
     print(f"\nCorpus:  {paths['corpus']}")
     print(f"Images:  {paths['imgs']}")
     print(f"Output:  {paths['charnet']}")
-    
+
     if paths["single_doc"]:
         print(f"Mode:    Single document")
     else:
         n_docs = sum(1 for d in paths["imgs"].iterdir() if d.is_dir())
         print(f"Mode:    Full corpus ({n_docs} documents)")
-    
+
     print("\nSteps:")
     for step_num, step_info in STEPS.items():
         status = "[ ]"
@@ -324,10 +324,10 @@ def print_status(paths, steps_to_run):
                     status = "[✓]"
             except (StopIteration, OSError):
                 pass
-        
+
         marker = " <--" if step_num in steps_to_run else ""
         print(f"  {status} {step_num}. {step_info['name']}: {step_info['description']}{marker}")
-    
+
     print()
 
 
@@ -400,7 +400,9 @@ def main(argv=None):
         steps_to_run = [int(s.strip()) for s in args.steps.split(",")]
         for s in steps_to_run:
             if s not in STEPS:
-                parser.error(f"Invalid step: {s}. Valid steps: 1,2,3,4,5")
+                parser.error(
+                    f"Invalid step: {s}. "
+                    f"Valid steps: {','.join(str(k) for k in sorted(STEPS))}")
     except ValueError:
         parser.error(f"Invalid steps format: {args.steps}. Use comma-separated numbers.")
 
@@ -414,7 +416,7 @@ def main(argv=None):
 
     # Resolve paths
     paths = resolve_corpus_paths(args.input_dir, args.single_doc)
-    
+
     # Validate
     errors = validate_paths(paths)
     if errors:
@@ -438,15 +440,15 @@ def main(argv=None):
     print("=" * 60)
 
     total_start = time.time()
-    
+
     for step_num in sorted(steps_to_run):
         step_info = STEPS[step_num]
         print(f"\n>> Step {step_num}: {step_info['name']}")
         print("-" * 40)
-        
+
         step_start = time.time()
         runner = STEP_RUNNERS[step_num]
-        
+
         # Steps with extra config arguments
         if step_num == 1:
             success, error = runner(paths, workers, args.skip_existing, args.charnet_config)
@@ -454,9 +456,9 @@ def main(argv=None):
             success, error = runner(paths, workers, args.skip_existing, args.acontrario_config)
         else:
             success, error = runner(paths, workers, args.skip_existing)
-        
+
         elapsed = time.time() - step_start
-        
+
         if success:
             print(f"\n  ✓ Step {step_num} completed in {elapsed:.1f}s")
         else:

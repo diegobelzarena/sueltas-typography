@@ -20,4 +20,6 @@ joblib
 editdistance
 pyclipper
 shapely
-pyyaml
+colorspacious
+networkx
+umap-learn

@@ -19,7 +19,7 @@
 
 
 import numpy as np
-from skimage.transform import (AffineTransform, EuclideanTransform, 
+from skimage.transform import (AffineTransform, EuclideanTransform,
                                SimilarityTransform, ProjectiveTransform, warp)
 from skimage import transform as tf
 
@@ -27,10 +27,10 @@ from skimage import transform as tf
 
 def gradient(I: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Compute the discrete gradient of an image.
-    
+
     Args:
         I: Array of shape (h, w)|(h, w, c).
-    
+
     Returns:
         nablaI: Array [Iy, Ix] of shape (2, h, w)|(2, h, w, c), where Iy (resp.
             Ix) is the partial derivative along height (resp. width) direction.
@@ -52,29 +52,29 @@ def p_to_psi(p: tuple[float, ...], transform: str) -> ProjectiveTransform:
     if transform == 'translation':
         tx, ty = p
         return SimilarityTransform(translation=[tx, ty])
-    
+
     elif transform == 'euclidean': # Clockwise!
         tx, ty, theta = p
         return SimilarityTransform(rotation=theta, translation=[tx, ty])
-    
+
     elif transform == 'homothety': # Not in [BFS2018]
         tx, ty, a = p
         return SimilarityTransform(scale=1+a, translation=[tx, ty])
-    
+
     elif transform == 'similarity':
         tx, ty, a, b = p
         matrix = [[1+a,  -b, tx],
                   [  b, 1+a, ty],
                   [  0,   0,  1]]
         return SimilarityTransform(matrix=matrix)
-    
+
     elif transform == 'affinity':
         tx, ty, a11, a12, a21, a22 = p
         matrix = [[1+a11,   a12, tx],
                   [  a21, 1+a22, ty],
                   [    0,     0,  1]]
         return AffineTransform(matrix=matrix)
-    
+
     # TODO: uncomment when discard_pixels() implements the homography case
     # elif transform == 'homography':
     #     h11, h12, h13, h21, h22, h23, h31, h32 = p
@@ -82,10 +82,10 @@ def p_to_psi(p: tuple[float, ...], transform: str) -> ProjectiveTransform:
     #               [  h21, 1+h22, h23],
     #               [  h31,   h32,  1 ]]
     #     return ProjectiveTransform(matrix=matrix)
-    
+
     else:
         raise ValueError()
-    
+
 
 def matrix_to_p(A: np.ndarray, transform: str) -> tuple[float, ...]:
     """Convert a planar transformation from matrix (in projective coordinates)
@@ -97,41 +97,41 @@ def matrix_to_p(A: np.ndarray, transform: str) -> tuple[float, ...]:
 
     if transform == 'translation':
         return A[0, 2], A[1, 2]
-    
+
     elif transform == 'euclidean':
         return A[0, 2], A[1, 2], np.arctan2(A[1, 0], A[1, 1])
-    
+
     elif transform == 'homothety':
         return A[0, 2], A[1, 2], A[0, 0] - 1
-    
+
     elif transform == 'similarity':
         return A[0, 2], A[1, 2], A[0, 0] - 1, A[1, 0]
-    
+
     elif transform == 'affinity':
         return A[0, 2], A[1, 2], A[0, 0] - 1, A[0, 1], A[1, 0], A[1, 1] - 1
-    
+
     # TODO: uncomment when discard_pixels() implements the homography case
     # elif transform == 'homography':
     #     return (A[0, 0] - 1, A[0, 1],     A[0, 2],
     #             A[1, 0],     A[1, 1] - 1, A[1, 2],
     #             A[2, 0],     A[2, 1])
-    
+
     else:
         raise ValueError()
 
 
 def jacobian(shape: tuple[int], transform: str) -> np.ndarray:
     """Map the Jacobians of assotiated to a given Lie group of transformations.
-     
+
     More precisely, compute, for each point P of the plane, the Jacobian around
     0 of the function which maps a tuple parametrizing a transformation Psi,
     to Psi(P).
-    
+
     Args:
         shape: Shape of the domain where we want to map the Jacobians (i.e.
             I.shape for any image I on this domain).
         transform: Name of the type of transformations considered.
-    
+
     Returns:
         A batch of matrices as an array of shape (h, w, 2, p) where (h, w) is
         the input shape and p is the number of parameters of the transform.
@@ -141,7 +141,7 @@ def jacobian(shape: tuple[int], transform: str) -> np.ndarray:
     if transform == 'translation':
         J = np.zeros(shape + (2, 2))
         J[:, :, :, :] = np.eye(2)
-    
+
     elif transform == 'euclidean': # Clockwise!
         J = np.zeros(shape + (2, 3))
         J[:, :, :, :2] = np.eye(2)
@@ -169,7 +169,7 @@ def jacobian(shape: tuple[int], transform: str) -> np.ndarray:
         J[:, :, 0, 3] = yy
         J[:, :, 1, 4] = xx
         J[:, :, 1, 5] = yy
-    
+
     # TODO: uncomment when discard_pixels() implements the homography case
     # elif transform == 'homography':
     #     J = np.zeros(shape + (2, 8))
@@ -202,7 +202,7 @@ def discard_pixels(I1shape: tuple[int, int],
         I1shape: I1.shape, for any image I1 of domain Omega1
         I2shape: I2.shape, for any image I2 of domain Omega2
         Psi: skimage representation of Psi
-    
+
     Returns:
         A bool array of shape I1shape, where False indicates discarded pixels.
     """
@@ -211,7 +211,7 @@ def discard_pixels(I1shape: tuple[int, int],
     if (not isinstance(Psi, EuclideanTransform)
         and not isinstance(Psi, AffineTransform)):
         raise ValueError()
-    
+
     ny, nx = I2shape # In inverse_compositional() comments, (ny, nx) is I1.shape
 
     #       [[a, b, c],
@@ -247,12 +247,12 @@ def inverse_compositional(I1: np.ndarray,
             values are the same as for `jacobian()`.
         epsilon: End iterations when the norm of increments falls below this.
         jmax: Maximum number of iterations.
-    
+
     Returns:
         Parameters of the transformation Psi such that I1(.) = I2(Psi(.)), i.e.
         I1 == skimage.transforms.warp(I2, Psi, output_shape=I1.shape)
     """
-    
+
     ### Grayscale conversion
     if len(I1.shape) == 3:
         I1 = I1.mean(axis=-1)
@@ -269,7 +269,7 @@ def inverse_compositional(I1: np.ndarray,
     # G, G.T @ G
     G = np.einsum('yxij,iyx->yxj', J, nablaI1) # shape (ny, nx, np)
     GTG = np.einsum('yxi,yxj->yxij', G, G) # shape (ny, nx, np, np)
-    
+
     ### Incremental refinement
 
     # Initialize
@@ -283,7 +283,7 @@ def inverse_compositional(I1: np.ndarray,
 
         # Discard pixels outside boundary
         mask = discard_pixels(I1.shape, I2.shape, Psi) # shape (ny, nx)
-        
+
         # DI
         DI = warp(I2, Psi, output_shape=I1.shape, mode='edge', order=3) - I1 # shape (ny, nx)
 
@@ -318,7 +318,7 @@ def register2ref(img: np.ndarray,
     If the registration fails (ill-posed problem: too many degrees of freedom
     causing linear system to be singular), it falls back to the translation-only
     case. If this fails too, the function returns the original image.
-    
+
     Args:
         img: Input image, shape (h, w)|(h, w, c).
         ref: Reference image, shape (h, w)|(h, w, c).
@@ -355,7 +355,7 @@ def register2mean(imgs: np.ndarray,
                   return_tf_matrix: bool = False
                   ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Register a batch of images to their mean.
-    
+
     Args:
         imgs: Batch of input images, shape (n, h, w)|(n, h, w, c).
         transform: Name of the type of transformations considered. Accepted
@@ -386,7 +386,7 @@ def register_batch2ref(imgs: np.ndarray,
                        return_tf_matrix: bool = False
                        ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Register a batch of images to a given reference.
-    
+
     Args:
         imgs: Batch of input images, shape (n, h, w)|(n, h, w, c).
         ref: Reference image, shape (h, w)|(h, w, c).

@@ -14,13 +14,13 @@ def bg_flatten(img_doc: np.ndarray,
                equalize: bool = True,
                tile_size: int | None = None) -> np.ndarray:
     """Flatten the background of a document image; convert from 8-bit to float.
-    
+
     Args:
         img_doc: 8-bit grayscale document image, shape (h, w).
         d: Dilation size for text mask.
         equalize: Whether to have consistent output contrast.
         tile_size: If not None, image is processed in tiles of this size.
-        
+
     Returns:
         Image with background flattened to 1, shape (h, w) and values in [0, 1].
     """
@@ -55,7 +55,7 @@ def embed_noresize(imgs: list[np.ndarray],
           h: int = 32,
           w: int = 32,
           ) -> tuple[np.ndarray, np.ndarray]:
-    
+
     max_h, max_w = h, w
     img_ready = np.zeros((len(imgs), max_h, max_w))
     tf_params = np.zeros((len(imgs), 3))
@@ -67,11 +67,11 @@ def embed_noresize(imgs: list[np.ndarray],
             n_img[:h,:w] = img
             h,w = n_img.shape
             img = n_img.copy()
-            
+
         cut_h, cut_w = [0,h], [0,w]
         img = 1-img
         normalized = img/(img.sum()+1e-7)
-        
+
         ## Barycenter
         coords = np.indices(img.shape) # (2, h, w)
         bary = np.sum(normalized*coords, axis=(1, 2)) # (2,)
@@ -81,7 +81,7 @@ def embed_noresize(imgs: list[np.ndarray],
         transformed_image = skt.warp(img, transf.inverse, order=3)
         # transformed_image-= transformed_image.min()
         # transformed_image/= (transformed_image.max() + 1e-7)
-        
+
         h_lims = max(0, max_h//2 - h//2), min(max_h, max_h//2 + math.ceil(h/2))
         w_lims = max(0, max_w//2 - w//2), min(max_w, max_w//2 + math.ceil(w/2))
         if max_h < h:

@@ -125,7 +125,7 @@ def _save_json(char_bboxes, char_scores, word_instances, image_id,
         })
 
     os.makedirs(save_root, exist_ok=True)
-    with open(os.path.join(save_root, f"{image_id}.json"), "w") as f:
+    with open(os.path.join(save_root, f"{image_id}.json"), "w", encoding="utf-8") as f:
         json.dump(words, f, indent=2)
 
 

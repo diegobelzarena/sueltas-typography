@@ -38,9 +38,9 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Ensure the src/ packages are importable even without pip install -e .
 # ---------------------------------------------------------------------------
-_SRC = os.path.join(os.path.dirname(__file__), os.pardir, "src")
+_SRC = str(Path(__file__).resolve().parent.parent / "src")
 if _SRC not in sys.path:
-    sys.path.insert(0, os.path.abspath(_SRC))
+    sys.path.insert(0, _SRC)
 
 from image_processing.orientation import (
     filter_image_by_words,
@@ -172,7 +172,7 @@ def process_page(img_path: str, json_path: str, out_stem: str,
         img_h, img_w = img.shape
 
         # -- Load CharNet JSON -----------------------------------------------
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             words = json.load(f)
         if not words:
             return f"SKIP (no words): {img_path}"
@@ -247,16 +247,16 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             # Use the bg-flattened image for char_segment
             crop, crop_t, crop_l = _crop_word(
                 img_flat, wt, wb, wl, wr, char_tblrs_page)
-            
+
             if crop.size == 0 or crop.shape[0] < 3 or crop.shape[1] < 3:
                 word_char_tblrs.append(np.array([]))
                 word_mask_indices.append(np.array([], dtype=np.int64))
                 continue
-            
+
             # Normalize crop to [0, 1] for char_segment
             crop_min = crop.min() if crop.size > 0 else 0
             crop_max = crop.max() if crop.size > 0 else 1
-            crop = (crop - crop_min) / (crop_max - crop_min + 1e-8) 
+            crop = (crop - crop_min) / (crop_max - crop_min + 1e-8)
 
             # Convert char tblrs to crop-local coordinates
             local_tblrs = char_tblrs_page.copy()

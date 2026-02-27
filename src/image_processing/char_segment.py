@@ -12,13 +12,13 @@ def find_hor_paths(img: np.ndarray,
     A list of character boxes in the same line is provided. Computed paths are
     incentivized to stay close to the boxes' top (resp. bottom) edges and to
     wrap around the text.
-    
+
     Args:
         img: Grayscale text image, shape (h, w) and values in [0, 1].
         tblrs: Array of top, bottom, left, right edges of each box, shape (n, 4)
             and integer dtype.
         pen: Penalty parameter for deviating from box edges.
-        
+
     Returns:
         Top and bottom paths, as arrays of (y, x) points of shape (L, 2) (where
         L >= w is the length of each path).
@@ -74,7 +74,7 @@ def find_hor_paths(img: np.ndarray,
     denom_bottom = np.maximum(h - y_maxs, 1)
     denom_top = np.maximum(y_mins + 1, 1)
     denom_mid = np.maximum(y_maxs - y_mins + 1, 1)
-    
+
     costs += pen * np.maximum((yy-y_maxs)/denom_bottom,
                               np.maximum((y_mins-yy)/denom_top, 0))
     costs += 3*pen * (np.maximum(0, np.minimum(yy-y_mins, y_maxs-yy))
@@ -86,13 +86,13 @@ def find_hor_paths(img: np.ndarray,
     y_min_end = int(np.clip(y_mins[-1], 0, h-1))
     y_max_start = int(np.clip(y_maxs[0], 0, h-1))
     y_max_end = int(np.clip(y_maxs[-1], 0, h-1))
-    
+
     # Draw top and bottom paths
     tpath, _ = route_through_array(costs, [y_min_start, 0], [y_min_end, w-1],
                                    fully_connected=False, geometric=True)
     bpath, _ = route_through_array(costs, [y_max_start, 0], [y_max_end, w-1],
                                    fully_connected=False, geometric=True)
-    
+
     return np.array(tpath), np.array(bpath)
 
 def find_vert_paths(img: np.ndarray,
@@ -107,7 +107,7 @@ def find_vert_paths(img: np.ndarray,
 
     Minimal cost paths are found iteratively by increasing the background cost
     (i.e. forcing more rigidity), until they are "nice" enough.
-    
+
     Args:
         img: Grayscale text image, shape (h, w) and values in [0, 1].
         lrs: Array of left, right edges of each character box, shape (n, 2) and
@@ -119,7 +119,7 @@ def find_vert_paths(img: np.ndarray,
         bgcost_init: Initial background cost.
         bgcost_step: Background cost increase at each iteration.
         bgcost_max: Maximum background cost.
-    
+
     Returns:
         List of left and right paths, as an arrays of (y, x) points of shape
         (L, 2) (where L is the length of each path), for each character.
@@ -160,7 +160,7 @@ def find_vert_paths(img: np.ndarray,
         argmin = np.argmin(np.abs(lxlocs[idx+1:, :]-l_curr))
         l_targets[pos] = ( lxlocs[idx+1:, :].flatten()[argmin]
                          + l_curr )/2
-        
+
     # Find left and right paths for each box
     paths_list = []
     gamma = 0.3
@@ -175,7 +175,7 @@ def find_vert_paths(img: np.ndarray,
 
         while not((cond1 and cond2 and cond3) or cond4):
 
-            # Find left and right minimum cost path 
+            # Find left and right minimum cost path
             lpath, _ = route_through_array((img**gamma)+bgcost,
                                            [tops[l], l], [bots[l], l],
                                            fully_connected=True,
@@ -213,7 +213,7 @@ def find_vert_paths(img: np.ndarray,
             # If the conditions are not met, move the starting points closer to those of the contiguous characters
             l += 2*int(np.sign(np.round((l_target - l)/2)))
             r += 2*int(np.sign(np.round((r_target - r)/2)))
-            
+
             gamma = min(0.9, gamma + 0.05)
 
         paths_list.append([lpath, rpath])
@@ -221,11 +221,11 @@ def find_vert_paths(img: np.ndarray,
     return paths_list
 
 def char_segment(img_c, tblrs, box_clu, refwidth):
-    
+
     # Global padding
     img_c = np.pad(img_c, pad_width=1, mode='constant', constant_values=1)
     tblrs += 1
-    
+
     h, w = img_c.shape
     # Produce character segmentation, for each line element
     char_data, idxs_input = [], []

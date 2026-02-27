@@ -11,10 +11,10 @@ from scipy.stats import anderson, ks_1samp, norm, normaltest, shapiro
 
 def anderson_darling(x: np.ndarray) -> float:
     """Anderson-Darling test for normality.
-    
+
     Args:
         x: Input 1D sample, shape (n,)
-        
+
     Returns:
         p-value.
     """

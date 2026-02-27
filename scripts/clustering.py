@@ -144,18 +144,18 @@ def process_document(
     # and interpolated, so use near-zero threshold instead of exact equality
     img_stds = imgs[valid_mask].std(axis=(1, 2))
     near_zero_ratios = (imgs[valid_mask] < 0.05).sum(axis=(1, 2)) / (imgs.shape[1] * imgs.shape[2])
-    
+
     # Diagnostic: show distribution of filter values
     print(f"  Std range: [{img_stds.min():.4f}, {img_stds.max():.4f}], "
           f"median: {np.median(img_stds):.4f}")
     print(f"  Near-zero ratio range: [{near_zero_ratios.min():.4f}, {near_zero_ratios.max():.4f}], "
           f"median: {np.median(near_zero_ratios):.4f}")
-    
+
     std_pass = (img_stds > 0.01).sum()
     ratio_pass = (near_zero_ratios < 0.99).sum()
     print(f"  Images passing std>0.01: {std_pass}/{len(img_stds)}")
     print(f"  Images passing ratio<0.99: {ratio_pass}/{len(near_zero_ratios)}")
-    
+
     info_mask_sub = (img_stds > 0.01) & (near_zero_ratios < 0.99)
 
     # Combine masks

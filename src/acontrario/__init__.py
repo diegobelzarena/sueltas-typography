@@ -14,6 +14,15 @@ from scipy.cluster.hierarchy import leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
 from scipy.stats import binom
 
+__all__ = [
+    "load_adjacencies",
+    "estimate_all_quantiles_",
+    "estimate_quantiles_cross_corpus",
+    "acontrario",
+    "hierarchical_olo_order",
+    "build_alpha_grid",
+]
+
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -92,7 +101,7 @@ def estimate_quantiles_cross_corpus(
     ds_ref: np.ndarray,
     letters_ref: np.ndarray,
     alphas: np.ndarray,
-) -> np.ndarray:
+) -> tuple[np.ndarray, int, int]:
     """Estimate background quantiles using a reference corpus where possible.
 
     For each letter in *letters_target*:
@@ -117,6 +126,11 @@ def estimate_quantiles_cross_corpus(
     Returns
     -------
     qs : np.ndarray, shape (n_alpha, n_symbols_target)
+        Background quantiles.
+    n_from_ref : int
+        Number of letters whose quantiles were estimated from the reference.
+    n_from_self : int
+        Number of letters estimated from the target corpus itself.
     """
     # Build a lookup: letter -> index in the reference corpus
     ref_lookup = {letter: idx for idx, letter in enumerate(letters_ref)}

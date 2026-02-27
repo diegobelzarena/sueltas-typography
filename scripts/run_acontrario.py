@@ -512,7 +512,6 @@ def process_corpus(
                 idxs=idxs_order,
                 **graph_kw,
             )
-            # fig.axes[0].set_title(f"Edge strength: {style_name} score")
             _save_figure(fig, f"graph_{style_name}", save_dir, formats, dpi)
             plt.close(fig)
 

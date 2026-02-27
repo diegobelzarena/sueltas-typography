@@ -32,6 +32,9 @@ dependencies = [
     "Pillow",
     "scipy",
     "pyyaml",
+    "colorspacious",
+    "networkx",
+    "umap-learn",
 ]
 
 [tool.setuptools.packages.find]

@@ -14,7 +14,7 @@ def kmeans_init(X: torch.Tensor,
         X: Data points, shape (n, d).
         k: Number of clusters.
         seed: Random seed for reproducibility.
-    
+
     Returns:
         idx: Index of the closest cluster center for each point, shape (n,).
     """
@@ -71,12 +71,12 @@ def kmeans_ass(X: torch.Tensor,
 
 def kmeans_upd(X: torch.Tensor, idx: torch.Tensor, k: int) -> torch.Tensor:
     """Update step of the k-means algorithm.
-    
+
     Args:
         X: Data points, shape (n, d).
         idx: Cluster assignments, shape (n,) and dtype int.
         k: Number of clusters.
-        
+
     Returns:
         Cluster means, shape (k', d) where k'<=k is the number of non-empty
         clusters.
@@ -101,11 +101,11 @@ def kmeans_upd(X: torch.Tensor, idx: torch.Tensor, k: int) -> torch.Tensor:
 
 def regularization(Cov: torch.Tensor, ns: torch.Tensor) -> torch.Tensor:
     """Regularize covariance matrices with OAS (Oracle Approximating Shrinkage).
-    
+
     Args:
         Cov: Batch of covariance matrices, shape (k, d, d).
         ns: Sizes of samples used to estimate the covariances, shape (k,).
-        
+
     Returns:
         Regularized covariance matrices, shape (k, d, d).
     """
@@ -148,65 +148,15 @@ def cholesky(Cov: torch.Tensor, gamma: float = 1e-6) -> torch.Tensor:
 ## GMM fitting with EM
 
 
-# def M_step(X:torch.Tensor,
-#            idx: torch.Tensor,
-#            k: int
-#            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-#     """Maximisation step of EM for GMM fitting.
-    
-#     Args:
-#         X: Data points, shape (n, d).
-#         idx: Cluster assignments, shape (n,) and dtype int.
-#         k: Number of clusters.
-        
-#     Returns:
-#         GMM parameters: with k' <= k,
-#         - Pi: Gaussian mixture probabilities, shape (k',).
-#         - mu: Gaussian means, shape (k', d).
-#         - Cov: Gaussian covariances, shape (k', d, d).
-#     """
-#     n, d = X.shape
-#     # Cluster sizes π_i
-#     Pi = torch.zeros((k,), device=X.device, dtype=torch.long)
-#     vals, counts = torch.unique(idx, return_counts=True)
-#     Pi[vals] = counts
-#     # Cluster means
-#     mu = torch.zeros((k, d), device=X.device)
-#     mu = mu.index_add(0, idx, X)/Pi[:, None]
-#     # Cluster covariances
-#     Cov = torch.zeros((k, d, d), device=X.device)
-#     Y = X - mu[idx]
-#     Cov = Cov.index_add(0, idx, torch.einsum('ni,nj->nij', Y, Y)
-#                         )/Pi[:, None, None]
-#     # # Alternative to previous line;
-#     # # einsum+index_add speed sensitive to n or dtype, not to k
-#     # # matmul+forloop speed sensitive to k, not to n nor dtype
-#     # # Both are equivalent around k=1e3, n=1e4, float32
-#     # #                  or around k=1e3, n=5e3, float64
-#     # for i in vals:
-#     #     Zi = Z[idx == i]
-#     #     Cov[i] = Zi.T @ Zi / Pi[i]
-
-#     # Discard (almost) empty clusters
-#     idx_disc = (Pi < 2)
-#     if idx_disc.any():
-#         Pi = Pi[~idx_disc]
-#         mu = mu[~idx_disc]
-#         Cov = Cov[~idx_disc]
-
-#     Pi = Pi.type(torch.float32)/n
-#     return Pi, mu, Cov
-
-
 def M_step(X: torch.Tensor,
            w: torch.Tensor
            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Maximisation step of EM for GMM fitting, with OAS-regularized covariance.
-    
+
     Args:
         X: Data points, shape (n, d).
         w: Classification weights w[i, j] = P(Gaussian i | X_j), shape (k, n).
-        
+
     Returns:
         GMM parameters: with k' <= k,
         - Pi: Gaussian mixture probabilities, shape (k',).
@@ -243,7 +193,7 @@ def E_step(X: torch.Tensor,
            Cov: torch.Tensor
            ) -> tuple[torch.Tensor, torch.Tensor]:
     """Expectation step of EM for GMM fitting.
-    
+
     Args:
         X: Data points, shape (n, d).
         Pi: Gaussian mixture probabilities, shape (k,).
@@ -286,7 +236,7 @@ def train_GMM(X: torch.Tensor,
               ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
                          list[float], list[float]]:
     """Train a Gaussian Mixture Model (GMM) using EM initialized with k-means++.
-    
+
     Args:
         X: Data points, shape (n, d).
         n_clusters: Number of clusters (GMM components).
@@ -294,7 +244,7 @@ def train_GMM(X: torch.Tensor,
         epsilon: Convergence threshold.
         seed: RNG seed for reproducibility.
         verbose: If True, show progress bars.
-        
+
     Returns:
         Pi: Gaussian mixture probabilities, shape (k,), where k <= n_clusters is
             the final number of clusters.
@@ -308,7 +258,7 @@ def train_GMM(X: torch.Tensor,
     if (X == X[0]).all():
         return ( torch.tensor([1.]), X[0], torch.eye(X.shape[1]),
                  torch.ones((1, len(X)), dtype=torch.long), [0.], [0.] )
-    
+
     # Initialize the cluster centers with the k-means++ algorithm
     idx = kmeans_init(X, n_clusters, seed)
     Ds = []

@@ -53,11 +53,14 @@ STEP4_DOC_ORDER: list[str] | None = None
 STEP4_MAX_DOCS = 20
 
 
-def save(fig, name):
-    out = OUT_DIR / f"{name}.png"
-    fig.savefig(str(out), bbox_inches="tight", dpi=DPI, facecolor="white")
+def save(fig, name, formats=None):
+    if formats is None:
+        formats = ["png", "svg"]
+    for fmt in formats:
+        out = OUT_DIR / f"{name}.{fmt}"
+        fig.savefig(str(out), bbox_inches="tight", dpi=DPI, facecolor="white")
+        print(f"  Saved {out.relative_to(ROOT)}")
     plt.close(fig)
-    print(f"  Saved {out.relative_to(ROOT)}")
 
 
 # ===================================================================
@@ -72,7 +75,7 @@ def generate_step1():
         return
 
     img = plt.imread(str(img_path))
-    with open(json_path) as f:
+    with open(json_path, encoding="utf-8") as f:
         detections = json.load(f)
 
     fig, ax = plt.subplots(figsize=(10, 14))
@@ -161,10 +164,6 @@ def generate_step2_beforeafter():
         print("  SKIP"); return
 
     page_img = plt.imread(str(img_path))
-    # if page_img.ndim == 3:
-    #     page_gray = np.mean(page_img[..., :3], axis=-1)
-    # else:
-    #     page_gray = page_img
     data = np.load(str(npz_path), allow_pickle=True)
     imgs = data["char_imgs"]
     labels = data["char_labels"]
@@ -401,8 +400,31 @@ def _load_doc_index_map(csv_path: Path) -> dict[str, int]:
             try:
                 mapping[fname] = int(row["Index"])
             except (KeyError, ValueError):
+                print("error")
                 pass
     return mapping
+
+
+def _load_doc_printer_map(csv_path: Path) -> dict[str, str]:
+    """Return {FileName: Printer} from the ordered-table CSV."""
+    mapping: dict[str, str] = {}
+    if not csv_path.exists():
+        return mapping
+    with open(csv_path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            fname = row.get("FileName", "")
+            printer = row.get("Printer", "").strip()
+            if fname:
+                mapping[fname] = printer if printer else "unknown"
+    return mapping
+
+
+# Printer display: symbol + color, matching the LaTeX convention.
+# Keyed by the short printer name (last token of the full name).
+STEP4_PRINTER_STYLE: dict[str, tuple[str, str]] = {
+    "Ábrego":  ("\u2020", "tab:blue"),    # † blue  — Rodríguez de Ábrego
+    "Lyra":    ("\u2021", "tab:orange"),   # ‡ orange — Lyra
+}
 
 
 def _pick_italic_cluster(means, labels_arr, italics, letter: str):
@@ -427,6 +449,7 @@ def generate_step4():
 
     # --- Resolve document order ------------------------------------------------
     idx_map = _load_doc_index_map(STEP4_CSV)
+    printer_map = _load_doc_printer_map(STEP4_CSV)
 
     if STEP4_DOC_ORDER is not None:
         doc_dirs = [charnet_dir / d for d in STEP4_DOC_ORDER]
@@ -463,11 +486,22 @@ def generate_step4():
             row.append(img)
         grid.append(row)
 
-    # --- Determine document labels (CSV index) ---------------------------------
+    # --- Determine doc labels, printer symbols ---------------------------------
     doc_labels = []
+    doc_symbols = []   # (symbol_char, color) or None
     for d in doc_dirs:
         idx = idx_map.get(d.name)
         doc_labels.append(str(idx) if idx is not None else d.name[:8])
+        # Resolve printer -> short name (last token) -> symbol+color
+        full_printer = printer_map.get(d.name, "unknown")
+        short = full_printer.split()[-1] if full_printer else "unknown"
+        style = STEP4_PRINTER_STYLE.get(short)
+        if style is not None:
+            doc_symbols.append(style)
+        elif full_printer != "unknown" and full_printer:
+            doc_symbols.append(("*", "black"))  # known but unlisted printer
+        else:
+            doc_symbols.append(("*", "#999"))   # unknown
 
     # --- Draw ------------------------------------------------------------------
     cell_px = 0.55  # inches per cell
@@ -509,16 +543,30 @@ def generate_step4():
             for sp in ax.spines.values():
                 sp.set_visible(False)
 
-            # Document index header (first row only)
+            # Document index header + printer symbol (first row only)
             if r == 0:
+                sym_char, sym_color = doc_symbols[c]
+                header = f"{doc_labels[c]} {sym_char}"
                 ax.set_title(
-                    doc_labels[c], fontsize=6, pad=2,
-                    color="#888", fontfamily="monospace",
+                    header, fontsize=6, pad=2,
+                    color=sym_color, fontfamily="monospace",
                 )
 
-    fig.suptitle(
-        "Italic cluster centroids across documents",
-        fontsize=12, fontweight="bold", color="#222", y=0.99,
+    # --- Legend (bottom of figure) using Line2D markers ---
+    from matplotlib.lines import Line2D
+    legend_handles = []
+    # Collect unique printer styles in order
+    seen = set()
+    for short, (sym, clr) in STEP4_PRINTER_STYLE.items():
+        if short not in seen:
+            legend_handles.append(
+                Line2D([0], [0], marker="$" + sym + "$", color=clr,
+                       linestyle="None", markersize=8, label=short)
+            )
+            seen.add(short)
+    legend_handles.append(
+        Line2D([0], [0], marker="$*$", color="#999",
+               linestyle="None", markersize=8, label="unknown")
     )
     save(fig, "step4_clusters")
 
