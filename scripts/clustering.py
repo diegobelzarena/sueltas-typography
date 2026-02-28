@@ -281,19 +281,19 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
-  python scripts/clustering.py data/corpus-1/charnet --process-subfolders --workers 4
-  python scripts/clustering.py data/corpus-1/charnet/doc001
+  python scripts/clustering.py data/corpus-1/charnet --workers 4
+  python scripts/clustering.py data/corpus-1/charnet/doc001 --single-doc
         """,
     )
     parser.add_argument(
         "input_dir",
         help="Document folder with *_data.npz files, "
-             "or parent folder if --process-subfolders is set",
+             "or parent folder (processes subfolders by default)",
     )
     parser.add_argument(
-        "--process-subfolders",
+        "--single-doc",
         action="store_true",
-        help="Process each subfolder as a separate document",
+        help="Process a single document folder (cohesive with previous steps)",
     )
     parser.add_argument(
         "--skip-existing",
@@ -316,7 +316,16 @@ Examples:
 
     start = time.time()
 
-    if args.process_subfolders:
+    if args.single_doc:
+        result = process_document(
+            args.input_dir,
+            n_jobs=args.workers,
+            skip_existing=args.skip_existing,
+            device=args.device,
+        )
+        print(f"\n{result}")
+    else:
+        # Default: process each subfolder as a separate document
         subfolders = sorted(
             Path(args.input_dir) / d
             for d in os.listdir(args.input_dir)
@@ -331,14 +340,6 @@ Examples:
                 device=args.device,
             )
             print(f"\n[{i}/{len(subfolders)}] {result}")
-    else:
-        result = process_document(
-            args.input_dir,
-            n_jobs=args.workers,
-            skip_existing=args.skip_existing,
-            device=args.device,
-        )
-        print(f"\n{result}")
 
     print(f"\n{'='*60}")
     print(f"Total time: {time.time() - start:.2f}s")

@@ -383,13 +383,13 @@ def main(argv=None):
 Examples:
   python scripts/character_extraction.py data/corpus-1/imgs data/corpus-1/charnet
   python scripts/character_extraction.py data/corpus-1/imgs data/corpus-1/charnet --workers 4
+  python scripts/character_extraction.py data/corpus-1/imgs/doc001 data/corpus-1/charnet/doc001 --single-doc
         """,
     )
     parser.add_argument("image_root",
-                        help="Root folder with document subfolders of PNGs")
+                        help="Root folder with document subfolders of PNGs or a single document folder")
     parser.add_argument("json_root",
-                        help="Root folder with CharNet JSON outputs "
-                             "(same subfolder structure)")
+                        help="Root folder with CharNet JSON outputs (same subfolder structure or single folder)")
     parser.add_argument("--workers", type=int, default=0,
                         help="Number of parallel workers (default: ncpus-1)")
     parser.add_argument("--window-height", type=int, default=512,
@@ -408,6 +408,8 @@ Examples:
                         help="Height of embedded char images (default: 40)")
     parser.add_argument("--embed-w", type=int, default=32,
                         help="Width of embedded char images (default: 32)")
+    parser.add_argument("--single-doc", action="store_true",
+                        help="Process a single folder of PNGs and JSONs as one document")
     args = parser.parse_args(argv)
 
     image_root = Path(args.image_root)
@@ -418,20 +420,31 @@ Examples:
 
     # -- Collect page tasks --------------------------------------------------
     tasks = []  # (img_path, json_path, out_stem)
-    for doc_dir in sorted(image_root.iterdir()):
-        if not doc_dir.is_dir():
-            continue
-        json_dir = json_root / doc_dir.name
-        if not json_dir.is_dir():
-            continue
-        for img_file in sorted(doc_dir.glob("*.png")):
-            json_file = json_dir / f"{img_file.stem}.json"
+    if args.single_doc:
+        # Treat image_root and json_root as single document folders
+        for img_file in sorted(image_root.glob("*.png")):
+            json_file = json_root / f"{img_file.stem}.json"
             if not json_file.exists():
                 continue
-            out_stem = str(json_dir / f"{img_file.stem}_data")
+            out_stem = str(json_root / f"{img_file.stem}_data")
             if args.skip_existing and os.path.exists(f"{out_stem}.npz"):
                 continue
             tasks.append((str(img_file), str(json_file), out_stem))
+    else:
+        for doc_dir in sorted(image_root.iterdir()):
+            if not doc_dir.is_dir():
+                continue
+            json_dir = json_root / doc_dir.name
+            if not json_dir.is_dir():
+                continue
+            for img_file in sorted(doc_dir.glob("*.png")):
+                json_file = json_dir / f"{img_file.stem}.json"
+                if not json_file.exists():
+                    continue
+                out_stem = str(json_dir / f"{img_file.stem}_data")
+                if args.skip_existing and os.path.exists(f"{out_stem}.npz"):
+                    continue
+                tasks.append((str(img_file), str(json_file), out_stem))
 
     if not tasks:
         print("No pages to process.")

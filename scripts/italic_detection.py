@@ -10,7 +10,7 @@ Per-document script that:
 
 Usage:
     python italic_detection.py data/corpus-1/charnet --output-dir data/corpus-1/italic
-    python italic_detection.py data/corpus-1/charnet --process-subfolders
+    python italic_detection.py data/corpus-1/charnet 
 """
 
 from __future__ import annotations
@@ -301,24 +301,25 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
-  python scripts/italic_detection.py data/corpus-1/charnet --process-subfolders
-  python scripts/italic_detection.py data/corpus-1/charnet/doc001
+  python scripts/italic_detection.py data/corpus-1/charnet 
+  python scripts/italic_detection.py data/corpus-1/charnet/doc001 --single-doc
         """,
     )
     parser.add_argument(
         "input_dir",
         help="Document folder with *_data.npz files, "
-             "or parent folder if --process-subfolders is set",
+             "or parent folder if --process-subfolders is set or --single-doc",
     )
     parser.add_argument(
         "--output-dir",
         help="Output directory for italic_labels.npz files. "
              "Defaults to same as input.",
     )
+    # Subfolder processing is now default unless --single-doc is set
     parser.add_argument(
-        "--process-subfolders",
+        "--single-doc",
         action="store_true",
-        help="Process each subfolder as a separate document",
+        help="Process a single document folder (cohesive with previous steps)",
     )
     parser.add_argument(
         "--skip-existing",
@@ -336,7 +337,15 @@ Examples:
     start = time.time()
     num_workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
 
-    if args.process_subfolders:
+    if args.single_doc:
+        result = process_document(
+            args.input_dir,
+            output_dir=args.output_dir,
+            skip_existing=args.skip_existing,
+        )
+        print(result)
+    else:
+        # Default: process each subfolder as a separate document
         subfolders = sorted(
             Path(args.input_dir) / d
             for d in os.listdir(args.input_dir)
@@ -369,13 +378,6 @@ Examples:
                     done += 1
                     result = fut.result()
                     print(f"[{done}/{n}] {result}")
-    else:
-        result = process_document(
-            args.input_dir,
-            output_dir=args.output_dir,
-            skip_existing=args.skip_existing,
-        )
-        print(result)
 
     print(f"\nTotal time: {time.time() - start:.2f}s")
     return 0

@@ -116,7 +116,7 @@ def run_step_1(paths, workers, skip_existing, config_file=None,  single_doc=Fals
     return True, ""
 
 
-def run_step_2(paths, workers, skip_existing):
+def run_step_2(paths, workers, skip_existing, single_doc=False):
     """Run character extraction."""
     cmd = [
         sys.executable, "scripts/character_extraction.py",
@@ -127,6 +127,9 @@ def run_step_2(paths, workers, skip_existing):
     if skip_existing:
         cmd.append("--skip-existing")
 
+    if single_doc:
+        cmd.append("--single-doc")
+
     print(f"  Command: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=paths["root"],
                            capture_output=True, text=True)
@@ -135,16 +138,18 @@ def run_step_2(paths, workers, skip_existing):
     return True, ""
 
 
-def run_step_3(paths, workers, skip_existing):
+def run_step_3(paths, workers, skip_existing, single_doc=False):
     """Run italic detection."""
     cmd = [
         sys.executable, "scripts/italic_detection.py",
         str(paths["charnet"]),
-        "--process-subfolders",
         "--workers", str(workers),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
+        
+    if single_doc:
+        cmd.append("--single-doc")
 
     print(f"  Command: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=paths["root"],
@@ -154,16 +159,18 @@ def run_step_3(paths, workers, skip_existing):
     return True, ""
 
 
-def run_step_4(paths, workers, skip_existing):
+def run_step_4(paths, workers, skip_existing, single_doc=False):
     """Run clustering."""
     cmd = [
         sys.executable, "scripts/clustering.py",
         str(paths["charnet"]),
-        "--process-subfolders",
         "--workers", str(workers),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
+        
+    if single_doc:
+        cmd.append("--single-doc")
 
     print(f"  Command: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=paths["root"],
@@ -457,8 +464,10 @@ def main(argv=None):
             success, error = runner(paths, workers, args.skip_existing, args.charnet_config, args.single_doc)
         elif step_num == 6:
             success, error = runner(paths, workers, args.skip_existing, args.acontrario_config)
-        else:
+        elif step_num == 5:
             success, error = runner(paths, workers, args.skip_existing)
+        else:
+            success, error = runner(paths, workers, args.skip_existing, args.single_doc)
 
         elapsed = time.time() - step_start
 
