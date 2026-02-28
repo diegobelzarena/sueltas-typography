@@ -164,19 +164,23 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
-  python scripts/run_charnet.py configs/icdar2015_hourglass88.yaml \\
+  python scripts/run_charnet.py configs/icdar2015_hourglass88.yaml \
       data/corpus-1/imgs data/corpus-1/charnet --workers 4
+  python scripts/run_charnet.py configs/icdar2015_hourglass88.yaml \
+      data/corpus-1/imgs/doc001 data/corpus-1/charnet/doc001 --single-doc
         """,
     )
     parser.add_argument("config_file", help="path to charnet config file")
     parser.add_argument("input_root",
-                        help="root folder containing document subfolders with PNGs")
+                        help="root folder containing document subfolders with PNGs or a single document folder")
     parser.add_argument("output_root",
                         help="where to write results, preserving structure")
     parser.add_argument("--workers", type=int, default=0,
                         help="CPU workers for postprocessing (default: ncpus-1)")
     parser.add_argument("--skip-existing", action="store_true",
                         help="Skip images that already have JSON output")
+    parser.add_argument("--single-doc", action="store_true",
+                        help="Process a single folder of PNGs as one document")
     args = parser.parse_args(argv)
 
     cfg.merge_from_file(args.config_file)
@@ -216,11 +220,10 @@ Examples:
     # ---- collect all images up-front ---------------------------------------
     image_tasks = []  # list of (im_file, image_id, out_dir)
     skipped = 0
-    for doc in sorted(os.listdir(args.input_root)):
-        doc_path = os.path.join(args.input_root, doc)
-        if not os.path.isdir(doc_path):
-            continue
-        out_path = os.path.join(args.output_root, doc)
+    if args.single_doc:
+        # Treat input_root as a single document folder
+        doc_path = args.input_root
+        out_path = args.output_root
         for im_name in sorted(os.listdir(doc_path)):
             if not im_name.lower().endswith(".png"):
                 continue
@@ -236,6 +239,27 @@ Examples:
                 image_id,
                 out_path,
             ))
+    else:
+        for doc in sorted(os.listdir(args.input_root)):
+            doc_path = os.path.join(args.input_root, doc)
+            if not os.path.isdir(doc_path):
+                continue
+            out_path = os.path.join(args.output_root, doc)
+            for im_name in sorted(os.listdir(doc_path)):
+                if not im_name.lower().endswith(".png"):
+                    continue
+                image_id = os.path.splitext(im_name)[0]
+                # Check if output already exists
+                if args.skip_existing:
+                    json_path = os.path.join(out_path, f"{image_id}.json")
+                    if os.path.exists(json_path):
+                        skipped += 1
+                        continue
+                image_tasks.append((
+                    os.path.join(doc_path, im_name),
+                    image_id,
+                    out_path,
+                ))
 
     if skipped > 0:
         print(f"Skipped {skipped} images with existing outputs.")

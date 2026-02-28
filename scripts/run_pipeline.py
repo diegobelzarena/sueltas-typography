@@ -88,7 +88,7 @@ def find_charnet_config():
     return None
 
 
-def run_step_1(paths, workers, skip_existing, config_file=None):
+def run_step_1(paths, workers, skip_existing, config_file=None,  single_doc=False):
     """Run CharNet OCR."""
     if config_file is None:
         config_file = find_charnet_config()
@@ -104,6 +104,9 @@ def run_step_1(paths, workers, skip_existing, config_file=None):
     ]
     if skip_existing:
         cmd.append("--skip-existing")
+        
+    if single_doc:
+        cmd.append("--single-doc")
 
     print(f"  Command: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=paths["root"],
@@ -451,7 +454,7 @@ def main(argv=None):
 
         # Steps with extra config arguments
         if step_num == 1:
-            success, error = runner(paths, workers, args.skip_existing, args.charnet_config)
+            success, error = runner(paths, workers, args.skip_existing, args.charnet_config, args.single_doc)
         elif step_num == 6:
             success, error = runner(paths, workers, args.skip_existing, args.acontrario_config)
         else:
