@@ -3,6 +3,9 @@
 > Official implementation — ICDAR 2026
 
 Unsupervised pipeline for extracting, clustering, and comparing typographic features from historical printed documents.
+## Dataset
+The full dataset used in this project is available at:
+[https://osf.io/tkwf9/overview?view_only=6fcc7fdf07ee444d86fddd1aefe11659](https://osf.io/tkwf9/overview?view_only=6fcc7fdf07ee444d86fddd1aefe11659)
 
 <p align="center">
   <img src="docs/images/step6_acontrario.png" width="90%" alt="A contrario analysis results"/>
