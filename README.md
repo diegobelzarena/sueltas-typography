@@ -41,6 +41,7 @@ You can override the config file for most steps via command-line arguments (e.g.
 
 ## Quick Start
 
+
 Run the complete pipeline on a corpus with a single command:
 
 ```bash
@@ -49,20 +50,40 @@ python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4,5,6 --workers 4
 
 Or run individual steps (see below for details).
 
+You can also run steps 1–4 on a single document folder:
+
+```bash
+python scripts/run_pipeline.py data/corpus-1/imgs/doc001 --single-doc --steps 1,2,3,4 --workers 4
+```
+
+This will process only the specified document for detection, extraction, italic detection, and clustering.
+
 ---
+
 
 ## Pipeline Overview
 
 The pipeline assumes document images (PNG) are already available, organized as:
 ```
 data/corpus-1/imgs/
-    document_001/
-        page_001.png
-        page_002.png
-        ...
-    document_002/
-        ...
+  document_001/
+    page_001.png
+    page_002.png
+    ...
+  document_002/
+    ...
 ```
+
+### Corpus Metadata CSV
+
+**Required:** Each corpus folder must contain a metadata CSV file with `corpus` in its filename (e.g. `corpus_known.csv`, `ordered-table-corpus1.csv`).
+
+**Required columns:**
+- `Index`: Numbered index for each document (integer, unique per document)
+- `Printer`: Printer name for each document (if known; otherwise leave blank or use `unknown`)
+- `FileName`: Name of each document (should match the folder or file names exactly)
+
+This file is used for printer attribution and document mapping. If missing, the pipeline will run but printer information will be marked as unknown and some features may be unavailable.
 
 ### Step 1 — OCR with CharNet
 

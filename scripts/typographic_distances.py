@@ -110,7 +110,7 @@ def load_metadata(corpus_dir: Path) -> pd.DataFrame | None:
 
     try:
         df = pd.read_csv(csv_path, encoding="utf-8")
-        doc_col = "Document"
+        doc_col = "FileName"
         printer_col = "Printer"
 
         if doc_col not in df.columns:
