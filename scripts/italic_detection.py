@@ -28,6 +28,15 @@ import numpy as np
 from scipy.spatial import cKDTree
 from skimage.filters import threshold_otsu
 
+# ---------------------------------------------------------------------------
+# Ensure the src/ packages are importable
+# ---------------------------------------------------------------------------
+_SRC = str(Path(__file__).resolve().parent.parent / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
+from shared.tools.report import StepReport
+
 
 # ---------------------------------------------------------------------------
 # Ported from char-clust-trees/extract_chars/method.py
@@ -153,20 +162,15 @@ def process_document(
     doc_dir: str | Path,
     output_dir: str | Path | None = None,
     skip_existing: bool = False,
-) -> str:
+) -> tuple[str, dict]:
     """
     Process a single document folder to compute italic labels.
 
-    Args:
-        doc_dir: Path to document folder containing *_data.npz files.
-        output_dir: Where to save the output .npz. If None, saves in doc_dir.
-        skip_existing: Skip if output already exists.
-
-    Returns:
-        Status message.
+    Returns (status_message, info_dict).
     """
     doc_dir = Path(doc_dir)
     doc_name = doc_dir.name
+    info: dict = {"doc_name": doc_name}
 
     if output_dir is None:
         output_dir = doc_dir
@@ -176,12 +180,14 @@ def process_document(
 
     out_path = output_dir / "italic_labels.npz"
     if skip_existing and out_path.exists():
-        return f"SKIP: {doc_name} (already exists)"
+        info["status"] = "skip"
+        return f"SKIP: {doc_name} (already exists)", info
 
     # -- Step 1: Collect data from all pages ----------------------------------
     npz_files = sorted(doc_dir.glob("*_data.npz"))
     if not npz_files:
-        return f"SKIP: {doc_name} (no .npz files)"
+        info["status"] = "skip"
+        return f"SKIP: {doc_name} (no .npz files)", info
 
     all_strokes = []
     page_data = []  # List of (words, strokes, char_word_idx, n_chars)
@@ -210,7 +216,8 @@ def process_document(
         })
 
     if not page_data:
-        return f"SKIP: {doc_name} (no valid pages)"
+        info["status"] = "skip"
+        return f"SKIP: {doc_name} (no valid pages)", info
 
     # -- Step 2: Compute threshold --------------------------------------------
     all_strokes_flat = np.concatenate(all_strokes)
@@ -218,7 +225,9 @@ def process_document(
     valid_strokes = valid_strokes[~np.isnan(valid_strokes)]
 
     if len(valid_strokes) < 10:
-        return f"SKIP: {doc_name} (too few valid strokes: {len(valid_strokes)})"
+        info.update(status="skip", reason="too few valid strokes",
+                    n_valid_strokes=int(len(valid_strokes)))
+        return f"SKIP: {doc_name} (too few valid strokes: {len(valid_strokes)})", info
 
     q_85, q_90, q_95 = np.quantile(valid_strokes, [0.85, 0.9, 0.95])
     threshold = threshold_otsu(valid_strokes)
@@ -288,10 +297,25 @@ def process_document(
     n_total = len(char_italic_flat)
     pct = 100 * n_italic / n_total if n_total > 0 else 0
 
+    info.update(
+        status="ok",
+        n_pages=len(page_data),
+        total_characters=int(n_total),
+        n_roman=int(n_total - n_italic),
+        n_italic=int(n_italic),
+        italic_ratio=round(pct / 100, 4),
+        otsu_threshold=round(float(threshold), 4),
+        n_valid_strokes=int(len(valid_strokes)),
+        quantiles={"q85": round(float(q_85), 4),
+                   "q90": round(float(q_90), 4),
+                   "q95": round(float(q_95), 4)},
+    )
+
     return (
         f"OK: {doc_name}  "
         f"({len(page_data)} pages, {n_total} chars, "
-        f"{n_italic} italic [{pct:.1f}%], threshold={threshold:.2f})"
+        f"{n_italic} italic [{pct:.1f}%], threshold={threshold:.2f})",
+        info,
     )
 
 
@@ -336,13 +360,15 @@ Examples:
 
     start = time.time()
     num_workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    report = StepReport("italic_detection")
 
     if args.single_doc:
-        result = process_document(
+        result, info = process_document(
             args.input_dir,
             output_dir=args.output_dir,
             skip_existing=args.skip_existing,
         )
+        report.add_document(info.get("doc_name", "unknown"), info)
         print(result)
     else:
         # Default: process each subfolder as a separate document
@@ -356,11 +382,12 @@ Examples:
 
         if num_workers == 1:
             for i, subfolder in enumerate(subfolders, 1):
-                result = process_document(
+                result, info = process_document(
                     subfolder,
                     output_dir=args.output_dir,
                     skip_existing=args.skip_existing,
                 )
+                report.add_document(info.get("doc_name", subfolder.name), info)
                 print(f"[{i}/{n}] {result}")
         else:
             done = 0
@@ -376,8 +403,26 @@ Examples:
                 }
                 for fut in as_completed(futures):
                     done += 1
-                    result = fut.result()
+                    result, info = fut.result()
+                    report.add_document(info.get("doc_name", futures[fut].name), info)
                     print(f"[{done}/{n}] {result}")
+
+    # -- Summary & report ----------------------------------------------------
+    total_chars = sum(d.get("total_characters", 0) for d in report.documents.values())
+    total_italic = sum(d.get("n_italic", 0) for d in report.documents.values())
+    n_ok = sum(1 for d in report.documents.values() if d.get("status") == "ok")
+    report.set_summary({
+        "total_documents": len(report.documents),
+        "documents_processed": n_ok,
+        "total_characters": total_chars,
+        "total_italic": total_italic,
+        "overall_italic_ratio": round(total_italic / total_chars, 4) if total_chars else 0,
+    })
+
+    input_dir = Path(args.input_dir)
+    report_dir = (input_dir if args.single_doc else input_dir.parent) / "reports"
+    rpath = report.save(report_dir)
+    print(f"Report saved: {rpath}")
 
     print(f"\nTotal time: {time.time() - start:.2f}s")
     return 0

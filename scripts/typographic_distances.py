@@ -45,6 +45,7 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 from image_processing.tools.inverse_compositional import register2mean
+from shared.tools.report import StepReport
 
 
 # ---------------------------------------------------------------------------
@@ -385,8 +386,9 @@ def process_style(
     style: str,
     metadata: pd.DataFrame | None,
     config: dict,
-) -> str:
-    """Process a single style (roman or italic)."""
+) -> tuple[str, dict]:
+    """Process a single style (roman or italic). Returns (status, info_dict)."""
+    info: dict = {"style": style}
     print(f"\n{'='*60}")
     print(f"Processing style: {style}")
     print(f"{'='*60}")
@@ -398,7 +400,8 @@ def process_style(
     )
 
     if len(mean_imgs) == 0:
-        return f"SKIP: No valid clusters for style '{style}'"
+        info["status"] = "skip"
+        return f"SKIP: No valid clusters for style '{style}'", info
 
     print(f"  Documents: {len(folders)}")
     print(f"  Clusters: {len(mean_imgs)}")
@@ -422,7 +425,8 @@ def process_style(
     Adj, letters = compute_distances(mean_imgs, labels, names, folders, config)
 
     if len(Adj) == 0:
-        return f"SKIP: No valid letter comparisons for style '{style}'"
+        info["status"] = "skip"
+        return f"SKIP: No valid letter comparisons for style '{style}'", info
 
     print(f"  Valid letters: {len(letters)}")
     print(f"  Adjacency shape: {Adj.shape}")
@@ -440,7 +444,29 @@ def process_style(
     )
 
     print(f"\n  Saved: {out_path}")
-    return f"OK: {style} — {len(folders)} docs, {len(letters)} letters"
+
+    # Compute distance stats from the adjacency matrices
+    # Extract the min-distance per-pair (lower triangle)
+    n_d = len(folders)
+    pair_dists = []
+    for li in range(Adj.shape[0]):
+        for i in range(n_d):
+            for j in range(i + 1, n_d):
+                v = Adj[li, i, j]
+                if v < 2 * Adj[li].max():  # skip default-filled entries
+                    pair_dists.append(v)
+
+    info.update(
+        status="ok",
+        n_documents=n_d,
+        n_clusters_total=int(len(mean_imgs)),
+        n_letters_used=len(letters),
+        letters_list=letters,
+        n_document_pairs=n_d * (n_d - 1) // 2,
+        mean_distance=round(float(np.mean(pair_dists)), 6) if pair_dists else None,
+        median_distance=round(float(np.median(pair_dists)), 6) if pair_dists else None,
+    )
+    return f"OK: {style} \u2014 {len(folders)} docs, {len(letters)} letters", info
 
 
 def main(argv=None):
@@ -506,6 +532,8 @@ Examples:
     # Process each style
     start = time.time()
     results = []
+    report = StepReport("typographic_distances",
+                        config_file=str(config_path) if config_path.exists() else "defaults")
 
     for style in styles:
         out_path = corpus_dir / f"distances_{style}.npz"
@@ -514,7 +542,8 @@ Examples:
             results.append(f"SKIP: {style} (already exists)")
             continue
 
-        result = process_style(corpus_dir, charnet_dir, style, metadata, config)
+        result, style_info = process_style(corpus_dir, charnet_dir, style, metadata, config)
+        report.update_summary(**{style: style_info})
         results.append(result)
 
     # Summary
@@ -524,6 +553,10 @@ Examples:
     for r in results:
         print(f"  {r}")
     print(f"\nTotal time: {time.time() - start:.1f}s")
+
+    report_dir = corpus_dir / "reports"
+    rpath = report.save(report_dir)
+    print(f"Report saved: {rpath}")
 
     return 0
 

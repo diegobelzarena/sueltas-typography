@@ -48,6 +48,7 @@ from acontrario import (
     load_adjacencies,
 )
 from acontrario.visualization import plot_graph, plot_matrix
+from shared.tools.report import StepReport
 
 
 # ---------------------------------------------------------------------------
@@ -529,6 +530,37 @@ def process_corpus(
             plt.close(fig)
 
     print("\nDone.")
+
+    # ---- Build step report -------------------------------------------------
+    report = StepReport("acontrario")
+    report_data: dict = {
+        "n_documents": int(len(books)),
+        "n_isolated_removed": int(n_isolated),
+        "ordering_method": ordering_mode,
+        "metric_mode": metric_mode,
+        "epsilon": epsilon,
+    }
+    if n1hat_rm is not None:
+        sig_rm = int((n1hat_rm < n_rm).sum()) // 2 if n_rm is not None else 0
+        report_data["roman"] = {
+            "n_significant_pairs": sig_rm,
+            "mean_n1hat": round(float(n1hat_rm.mean()), 4),
+        }
+    if n1hat_it is not None:
+        sig_it = int((n1hat_it < n_it).sum()) // 2 if n_it is not None else 0
+        report_data["italic"] = {
+            "n_significant_pairs": sig_it,
+            "mean_n1hat": round(float(n1hat_it.mean()), 4),
+        }
+    # List generated plots
+    generated_plots = [str(p) for p in save_dir.glob("*.png")] + \
+                      [str(p) for p in save_dir.glob("*.svg")]
+    report_data["output_plots"] = generated_plots
+    report.set_summary(report_data)
+
+    report_dir = corpus_dir / "reports"
+    rpath = report.save(report_dir)
+    print(f"Report saved: {rpath}")
     return 0
 
 

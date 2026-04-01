@@ -3,6 +3,11 @@ import skimage as ski
 from skimage.graph import route_through_array
 import cv2
 
+
+# ---------------------------------------------------------------------------
+# box_init segmentation (original CharNet path)
+# ---------------------------------------------------------------------------
+
 def find_hor_paths(img: np.ndarray,
                    tblrs: np.ndarray,
                    pen: float = 0.1
@@ -278,3 +283,359 @@ def char_segment(img_c, tblrs, box_clu, refwidth):
             char_data.append(((t, b, l, r), mask.astype(bool)))
             idxs_input.append(idx.item())
     return char_data, idxs_input
+
+
+# ---------------------------------------------------------------------------
+# logit_init segmentation (DocTR path — uses CRNN-logit-derived boxes)
+# ---------------------------------------------------------------------------
+
+def find_hor_paths_logit_init(
+    img: np.ndarray,
+    tblrs: np.ndarray,
+    top_pad: float = 1,
+    bottom_pad: float = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Find top/bottom text-line edges using blur-based midline + multi-path routing.
+
+    Unlike :func:`find_hor_paths` (which extrapolates box edges into a barrier),
+    this variant estimates a midline from a blurred intensity profile and
+    selects the cheapest non-crossing paths above and below it.
+
+    Args:
+        img: Grayscale text image, shape (h, w) and values in [0, 1].
+        tblrs: Character boxes, shape (n, 4), integer.
+        top_pad: Vertical padding above text (pixels).
+        bottom_pad: Vertical padding below text (pixels).
+
+    Returns:
+        Top and bottom paths as arrays of (y, x) points.
+    """
+    h, w = img.shape
+
+    len_c = int(w / len(tblrs))
+    len_c += len_c % 2 + 1
+
+    # Approximate midline from blurred intensity
+    blur = cv2.GaussianBlur(
+        img, (len_c, 17), sigmaX=len_c / 2, sigmaY=9,
+        borderType=cv2.BORDER_REFLECT,
+    )
+    top_pad_int = int(top_pad)
+    bottom_pad_int = int(bottom_pad)
+    weights = 1 - blur[top_pad_int:-(bottom_pad_int), :]
+    y = np.arange(weights.shape[0])[:, None]
+    denom = weights.sum(axis=0) + 1e-12
+    yc = np.int8((weights * y).sum(axis=0) / denom) + top_pad_int
+
+    midline = np.clip(
+        np.stack([yc + i for i in np.arange(-h // 5, h // 5 + 1)]),
+        0, h - 1,
+    )
+    # Cost image: blend of blur and raw, with midline barrier
+    cost_img = 1 - ((3 * blur + img) / 4)
+    cost_img[midline, np.arange(w)] = 1000
+
+    costs = []
+    paths = []
+    for y_start in range(top_pad_int // 2, h - (bottom_pad_int // 2)):
+        path, cost = route_through_array(
+            cost_img, [y_start, 0], [y_start, w - 1],
+            fully_connected=True, geometric=True,
+        )
+        path = np.array(path)
+        paths.append(path)
+        costs.append(cost * (1 - cost_img[path[:, 0], path[:, 1]]).min())
+
+    # Build path-density image
+    path_img = np.zeros_like(img, dtype=int)
+    for path in paths:
+        path_img[*(path.T)] += 1
+
+    # Remove paths crossing midline
+    remove_idxs = []
+    for i, path in enumerate(paths):
+        for py, px in path:
+            if abs(py - yc[px]) < h // 5:
+                remove_idxs.append(i)
+                break
+    for idx in remove_idxs[::-1]:
+        paths.pop(idx)
+        costs.pop(idx)
+
+    # Rebuild density after filtering
+    path_img = np.zeros_like(img, dtype=int)
+    for path in paths:
+        path_img[*(path.T)] += 1
+
+    if len(paths) == 0:
+        default_top = np.column_stack([np.full(w, top_pad_int), np.arange(w)])
+        default_bot = np.column_stack([np.full(w, h - bottom_pad_int - 1), np.arange(w)])
+        return default_top, default_bot
+
+    # Normalize costs by mean path density
+    cost_agg = np.array(costs)
+    for i, path in enumerate(paths):
+        cost_agg[i] /= path_img[path[:, 0], path[:, 1]].mean()
+
+    clas = np.array([path[0, 0] > yc[0] for path in paths])
+
+    has_top = np.any(clas == 0)
+    has_bottom = np.any(clas == 1)
+    if not has_top or not has_bottom:
+        default_top = np.column_stack([np.full(w, top_pad_int), np.arange(w)])
+        default_bot = np.column_stack([np.full(w, h - bottom_pad_int - 1), np.arange(w)])
+        return default_top, default_bot
+
+    c1_s = np.argmin(clas == 0)
+    p1 = np.argmin(cost_agg[clas == 0])
+    p2 = np.argmin(cost_agg[clas == 1]) + c1_s
+
+    return np.array(paths[p1]), np.array(paths[p2])
+
+
+def find_vert_paths_logit_init(
+    img: np.ndarray,
+    lrs: np.ndarray,
+    tpath: np.ndarray | None = None,
+    bpath: np.ndarray | None = None,
+    bgcost_init: float = 0.3,
+    bgcost_step: float = 0.3,
+    bgcost_max: float = 1.75,
+    widths: np.ndarray | None = None,
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray | None]]:
+    """Find left/right character edges with italic-aware path routing.
+
+    Like :func:`find_vert_paths` but adds italic-slanted start-point
+    offsets and returns a third *proximity path* per character that can
+    optionally replace the right boundary.
+
+    Returns:
+        List of (lpath, rpath, prox_path) tuples for each character.
+        *prox_path* is the next character's left path for boundary
+        negotiation, or ``None`` for the last character.
+    """
+    h, w = img.shape
+    tan_theta = 0.2679491924311227  # tan(pi/12)
+    cos_theta = 0.9659258262890683  # cos(pi/12)
+
+    # Make paths into functions x -> y
+    if tpath is None:
+        tops = np.zeros(w, dtype=int)
+    else:
+        fwd, bck = np.zeros(w, dtype=int), np.zeros(w, dtype=int)
+        fwd[tpath[::-1, 1]] = tpath[::-1, 0]
+        bck[tpath[:, 1]] = tpath[:, 0]
+        tops = np.maximum(fwd, bck)
+    if bpath is None:
+        bots = np.zeros(w, dtype=int) + h - 1
+    else:
+        fwd, bck = np.zeros(w, dtype=int) + h - 1, np.zeros(w, dtype=int) + h - 1
+        fwd[bpath[::-1, 1]] = bpath[::-1, 0]
+        bck[bpath[:, 1]] = bpath[:, 0]
+        bots = np.minimum(fwd, bck)
+
+    # Target edges for iterative adjustment
+    r_targets = np.zeros(len(lrs), dtype=float)
+    rpos, rxlocs = zip(*sorted(enumerate(lrs), key=lambda x: x[1][1]))
+    rxlocs = np.array(rxlocs + ([w - 1, w - 1],))
+    for idx, (pos, (_, r_curr)) in enumerate(zip(rpos, rxlocs[:-1])):
+        argmin = np.argmin(np.abs(rxlocs[idx + 1:, :] - r_curr))
+        r_targets[pos] = (rxlocs[idx + 1:, :].flatten()[argmin] + r_curr) / 2
+    l_targets = np.zeros(len(lrs), dtype=float)
+    lpos, lxlocs = zip(*sorted(enumerate(lrs), key=lambda x: x[1][0], reverse=True))
+    lxlocs = np.array(lxlocs + ([0, 0],))
+    for idx, (pos, (l_curr, _)) in enumerate(zip(lpos, lxlocs[:-1])):
+        argmin = np.argmin(np.abs(lxlocs[idx + 1:, :] - l_curr))
+        l_targets[pos] = (lxlocs[idx + 1:, :].flatten()[argmin] + l_curr) / 2
+
+    paths_list = []
+    for (l_init, r_init), l_target, r_target in zip(lrs, l_targets, r_targets):
+        cond1, cond2, cond3, cond4 = False, False, False, False
+        bgcost = bgcost_init
+        l, r = l_init, r_init
+        gamma = 5
+        try_italic = False
+        h_ = min(bots[l], bots[r]) - max(tops[l], tops[r])
+        got_right = False
+        while (not ((cond1 and cond2 and cond3) or cond4) or try_italic) and not (not try_italic and got_right):
+            l_top = min(l + int(1.5 * tan_theta * h_ / 2) * try_italic, w - 1)
+            l_bot = max(l - int(0.5 * tan_theta * h_ / 2) * try_italic, 0)
+            r_top = min(r + int(1.5 * tan_theta * h_ / 2) * try_italic, w - 1)
+            r_bot = max(r - int(0.5 * tan_theta * h_ / 2) * try_italic, 0)
+
+            cost_img = (img[:, :] + (1 - bgcost)) ** gamma
+            cost_img += bgcost
+            lpath, cost_l = route_through_array(
+                cost_img, [tops[l_top], l_top], [bots[l_bot], l_bot],
+                fully_connected=True, geometric=True,
+            )
+            lpath = np.array(lpath)
+            rpath, cost_r = route_through_array(
+                cost_img, [tops[r_top], r_top], [bots[r_bot], r_bot],
+                fully_connected=True, geometric=True,
+            )
+            rpath = np.array(rpath)
+
+            aux_l = -1 + np.zeros(h, dtype=int)
+            aux_r = -1 + np.zeros(h, dtype=int)
+            aux_l[lpath[:, 0]] = lpath[:, 1]
+            aux_r[rpath[:, 0]] = rpath[:, 1]
+            lr_dif = (aux_r - aux_l)[(aux_l >= 0) & (aux_r >= 0)] + 1
+            width = max(r_bot - l_bot, r_top - l_top) + 1
+
+            if len(lr_dif) == 0:
+                cond1, cond2, cond3 = False, False, False
+            else:
+                cond1 = (max(lr_dif) <= (3 / 2) * width) and (lpath[:, 1].max() < (r_top + r_bot) / 2) and (lpath[:, 1].min() > ((l_top + l_bot) / 2) - 3 * width / 4)
+                cond2 = (min(lr_dif) >= (1 / 2) * width) and (rpath[:, 1].min() > (l_top + l_bot) / 2) and (rpath[:, 1].max() < ((r_top + r_bot) / 2) + 3 * width / 4)
+                cond3 = abs((np.mean(lr_dif) - width) / width) <= 0.33
+            cond4 = bgcost > bgcost_max
+
+            bgcost += bgcost_step * try_italic
+            gamma = int(max(1, gamma - 1 * try_italic))
+
+            if cond1 and cond2 and cond3:
+                if not try_italic:
+                    got_right = True
+                    right_cost = cost_l * img[lpath[:, 0], lpath[:, 1]].max() + cost_r * img[rpath[:, 0], rpath[:, 1]].max()
+                    right_l = lpath
+                    right_r = rpath
+                elif got_right:
+                    if (cost_l * img[lpath[:, 0], lpath[:, 1]].max() + cost_r * img[rpath[:, 0], rpath[:, 1]].max()) * cos_theta > right_cost:
+                        lpath = right_l
+                        rpath = right_r
+                else:
+                    got_right = True
+            elif got_right:
+                lpath = right_l
+                rpath = right_r
+            try_italic = not try_italic
+
+            l = int(l_init)
+            r = int(r_init)
+
+        if len(paths_list) > 0:
+            paths_list[-1].extend([lpath])
+        paths_list.append([lpath, rpath])
+    paths_list[-1].extend([None])
+
+    return paths_list
+
+
+def char_segment_logit_init(img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad, widths):
+    """Character segmentation using logit-initialised boxes (DocTR path).
+
+    Same contract as :func:`char_segment` but uses
+    :func:`find_hor_paths_logit_init` / :func:`find_vert_paths_logit_init`
+    and includes proximity-path boundary negotiation.
+
+    Args:
+        img_c: Grayscale image, shape (h, w), values in [0, 1].
+        tblrs: Character boxes, shape (n, 4).
+        box_clu: Line cluster assignments, shape (n,).
+        refwidth: Mean character width (float).
+        top_pad: Top padding size (pixels).
+        bottom_pad: Bottom padding size (pixels).
+        widths: Per-character widths array.
+
+    Returns:
+        char_data: list of ((t, b, l, r), mask) tuples.
+    """
+    h, w = img_c.shape
+    char_data = []
+    for i in range(1, box_clu.max() + 1):
+        boxes = tblrs[box_clu == i].copy()
+        idxs, = np.nonzero(box_clu == i)
+        if len(boxes) == 0:
+            continue
+        l0 = max(0, boxes[boxes[:, 2].argmin(), 2] - int(refwidth))
+        r0 = min(w, boxes[boxes[:, 3].argmax(), 3] + int(refwidth) + 1)
+        crop = img_c[:, l0:r0]
+        boxes[:, 2:] -= l0
+        tpath, bpath = find_hor_paths_logit_init(crop, boxes, top_pad, bottom_pad)
+        canv = np.zeros(crop.shape, dtype=bool)
+        canv[*(tpath.T)] = True
+        canv[*(bpath.T)] = True
+        loop = zip(idxs, find_vert_paths_logit_init(1 - crop, boxes[:, 2:], tpath, bpath, widths=widths))
+        last_pth = None
+        for idx, (lpath, rpath, prox_path) in loop:
+            # Boundary negotiation: prefer proximity path if it has lower cost
+            if prox_path is not None:
+                if 1 - crop[prox_path[:, 0], prox_path[:, 1]].mean() < 1 - crop[rpath[:, 0], rpath[:, 1]].mean():
+                    aux_l = -1 + np.zeros(h, dtype=int)
+                    aux_r = -1 + np.zeros(h, dtype=int)
+                    aux_l[lpath[:, 0]] = lpath[:, 1]
+                    aux_r[prox_path[:, 0]] = prox_path[:, 1]
+                    lr_dif = (aux_r - aux_l)[(aux_l >= 0) & (aux_r >= 0)] + 1
+                    lr_dif = np.clip(lr_dif, a_min=1, a_max=None)
+                    box_w = boxes[idxs == idx, 3] - boxes[idxs == idx, 2] + 1
+                    if max(lr_dif) <= 2 * box_w and min(lr_dif) >= (1 / 3) * box_w:
+                        rpath = prox_path
+            if last_pth is not None:
+                if 1 - crop[last_pth[:, 0], last_pth[:, 1]].mean() < 1 - crop[lpath[:, 0], lpath[:, 1]].mean():
+                    aux_l = -1 + np.zeros(h, dtype=int)
+                    aux_r = -1 + np.zeros(h, dtype=int)
+                    aux_l[last_pth[:, 0]] = last_pth[:, 1]
+                    aux_r[rpath[:, 0]] = rpath[:, 1]
+                    lr_dif = (aux_r - aux_l)[(aux_l >= 0) & (aux_r >= 0)] + 1
+                    lr_dif = np.clip(lr_dif, a_min=1, a_max=None)
+                    box_w = boxes[idxs == idx, 3] - boxes[idxs == idx, 2] + 1
+                    if max(lr_dif) <= 2 * box_w and min(lr_dif) >= (1 / 3) * box_w:
+                        lpath = last_pth
+            last_pth = rpath
+            canv_char = canv.copy()
+            canv_char[*(lpath.T)] = True
+            canv_char[*(rpath.T)] = True
+            l, r = lpath[:, 1].min(), rpath[:, 1].max()
+            canv_char = np.pad(canv_char[:, l:r + 1], pad_width=1)
+            char_comps = ski.measure.label(~canv_char, connectivity=1)
+            premask = (char_comps != char_comps[0, 0])[1:-1, 1:-1]
+            premask &= (crop[:, l:r + 1] != 1)
+            if not premask.any():
+                continue
+            hprojs, = np.nonzero(np.any(premask, axis=1))
+            vprojs, = np.nonzero(np.any(premask, axis=0))
+            t, b = np.min(hprojs), np.max(hprojs) + 1
+            pre_l, pre_r = np.min(vprojs), np.max(vprojs) + 1
+            r = l0 + l + pre_r
+            l += l0 + pre_l
+            mask = premask[t:b, pre_l:pre_r]
+            char_data.append(((t, b, l, r), mask.astype(bool)))
+    return char_data
+
+
+# ---------------------------------------------------------------------------
+# Dispatcher
+# ---------------------------------------------------------------------------
+
+def segment_characters(img_c, tblrs, box_clu, refwidth, *,
+                       mode="box_init",
+                       top_pad=1, bottom_pad=1, widths=None):
+    """Unified entry point for character segmentation.
+
+    Args:
+        img_c: Grayscale image, shape (h, w), values in [0, 1].
+        tblrs: Character boxes, shape (n, 4).
+        box_clu: Line cluster assignments, shape (n,).
+        refwidth: Mean character width (float).
+        mode: ``"box_init"`` (detector-box-based, original) or
+              ``"logit_init"`` (CRNN-logit-based, DocTR variant).
+        top_pad: Top padding (only used by ``logit_init``).
+        bottom_pad: Bottom padding (only used by ``logit_init``).
+        widths: Per-character widths (only used by ``logit_init``).
+
+    Returns:
+        For ``box_init``: (char_data, idxs_input) — list of ((t,b,l,r), mask)
+            tuples and corresponding input indices.
+        For ``logit_init``: char_data — list of ((t,b,l,r), mask) tuples
+            (no idxs_input).
+    """
+    if mode == "box_init":
+        return char_segment(img_c, tblrs, box_clu, refwidth)
+    elif mode == "logit_init":
+        return char_segment_logit_init(
+            img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad, widths,
+        )
+    else:
+        raise ValueError(f"Unknown segmentation mode: {mode!r}. "
+                         f"Expected 'box_init' or 'logit_init'.")

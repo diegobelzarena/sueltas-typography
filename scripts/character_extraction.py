@@ -47,8 +47,9 @@ from image_processing.orientation import (
     local_fft_sliding_window,
     structure_tensor,
 )
-from image_processing.char_segment import char_segment
+from image_processing.char_segment import char_segment, segment_characters
 from image_processing.preprocessing import bg_flatten, embed_noresize
+from shared.tools.report import StepReport
 
 
 # ---------------------------------------------------------------------------
@@ -158,24 +159,28 @@ def _extract_char_image(img_flat, tblr, mask):
 def process_page(img_path: str, json_path: str, out_stem: str,
                  window_height: int = 512, window_width: int = 512,
                  step_size: tuple = (256, 256), padding: int = 10,
-                 embed_h: int = 40, embed_w: int = 32) -> str:
+                 embed_h: int = 40, embed_w: int = 32,
+                 segmentation: str = "box_init") -> tuple[str, dict]:
     """Process a single page: orientations + char segmentation + char images.
 
     Writes ``{out_stem}.npz`` containing all per-page results.
-    Returns a status string.
+    Returns (status_string, page_info_dict).
     """
+    page_info: dict = {"page": os.path.basename(out_stem), "segmentation": segmentation}
     try:
         # -- Load image (grayscale) ------------------------------------------
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
         if img is None:
-            return f"SKIP (unreadable): {img_path}"
+            page_info["status"] = "skip_unreadable"
+            return f"SKIP (unreadable): {img_path}", page_info
         img_h, img_w = img.shape
 
         # -- Load CharNet JSON -----------------------------------------------
         with open(json_path, encoding="utf-8") as f:
             words = json.load(f)
         if not words:
-            return f"SKIP (no words): {img_path}"
+            page_info["status"] = "skip_no_words"
+            return f"SKIP (no words): {img_path}", page_info
 
         word_tblrs = [w["tblr"] for w in words if "tblr" in w]
 
@@ -185,7 +190,8 @@ def process_page(img_path: str, json_path: str, out_stem: str,
         # -- Step 2: mask non-word regions (on uint8 for FFT) ----------------
         filtered_img = filter_image_by_words(img, word_tblrs, padding=padding)
         if filtered_img is None:
-            return f"SKIP (filter failed): {img_path}"
+            page_info["status"] = "skip_filter_failed"
+            return f"SKIP (filter failed): {img_path}", page_info
 
         # -- Step 3: sliding-window FFT orientation --------------------------
         orientations, positions = local_fft_sliding_window(
@@ -195,7 +201,8 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             step_size=step_size,
         )
         if len(orientations) == 0:
-            return f"SKIP (no FFT windows): {img_path}"
+            page_info["status"] = "skip_no_fft"
+            return f"SKIP (no FFT windows): {img_path}", page_info
 
         # -- Step 4: structure tensor ----------------------------------------
         img_norm = filtered_img.astype(np.float64) / 255.0
@@ -286,10 +293,20 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             refwidth = float(np.mean(widths)) if len(widths) > 0 else 1.0
             box_clu = np.ones(len(local_tblrs), dtype=int)
 
-            # Run char_segment on bg-flattened crop
+            # Run character segmentation on bg-flattened crop
             try:
-                char_data, idxs_input = char_segment(
-                    crop, local_tblrs.copy(), box_clu, refwidth)
+                if segmentation == "box_init":
+                    char_data, idxs_input = segment_characters(
+                        crop, local_tblrs.copy(), box_clu, refwidth,
+                        mode="box_init")
+                else:
+                    # logit_init returns char_data only (no idxs_input)
+                    char_data = segment_characters(
+                        crop, local_tblrs.copy(), box_clu, refwidth,
+                        mode="logit_init",
+                        top_pad=1, bottom_pad=1, widths=widths)
+                    # Build identity index mapping
+                    idxs_input = list(range(len(char_data)))
             except Exception:
                 char_data = []
                 idxs_input = []
@@ -363,11 +380,22 @@ def process_page(img_path: str, json_path: str, out_stem: str,
 
         np.savez_compressed(f"{out_stem}.npz", **save_dict)
 
-        return f"OK: {out_stem}  ({len(words)} words, {n_chars_total} chars)"
+        n_words_with_chars = sum(
+            1 for v in word_char_tblrs if len(v) > 0
+        )
+        page_info.update(
+            status="ok",
+            n_words=len(words),
+            n_words_with_chars=n_words_with_chars,
+            n_characters_extracted=n_chars_total,
+        )
+        return f"OK: {out_stem}  ({len(words)} words, {n_chars_total} chars)", page_info
 
     except Exception as exc:
         import traceback
-        return f"ERROR ({img_path}): {exc}\n{traceback.format_exc()}"
+        page_info["status"] = "error"
+        page_info["error"] = str(exc)
+        return f"ERROR ({img_path}): {exc}\n{traceback.format_exc()}", page_info
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +438,10 @@ Examples:
                         help="Width of embedded char images (default: 32)")
     parser.add_argument("--single-doc", action="store_true",
                         help="Process a single folder of PNGs and JSONs as one document")
+    parser.add_argument("--segmentation", type=str, default="box_init",
+                        choices=["box_init", "logit_init"],
+                        help="Segmentation mode: box_init (CharNet) or "
+                             "logit_init (DocTR) (default: box_init)")
     args = parser.parse_args(argv)
 
     image_root = Path(args.image_root)
@@ -453,21 +485,50 @@ Examples:
     print(f"Found {len(tasks)} pages.  Using {num_workers} workers.")
 
     # -- Run -----------------------------------------------------------------
+    report = StepReport("character_extraction", segmentation=args.segmentation)
     done = 0
     with ProcessPoolExecutor(max_workers=num_workers) as pool:
         futures = [
             pool.submit(
                 process_page, img_p, json_p, out_s,
                 args.window_height, args.window_width, step_size, args.padding,
-                args.embed_h, args.embed_w,
+                args.embed_h, args.embed_w, args.segmentation,
             )
             for img_p, json_p, out_s in tasks
         ]
-        for fut in futures:
-            msg = fut.result()
+        for i, fut in enumerate(futures):
+            msg, page_info = fut.result()
+            img_p = tasks[i][0]
+            doc_name = Path(img_p).parent.name
+            page_name = Path(img_p).stem
+            report.add_page(doc_name, page_name, page_info)
             done += 1
             if done % 50 == 0 or done == len(tasks):
                 print(f"  [{done}/{len(tasks)}] {msg}")
+
+    # -- Per-doc aggregates & summary ----------------------------------------
+    total_words = 0
+    total_chars = 0
+    for doc_name, doc_data in report.documents.items():
+        pages = doc_data.get("pages", {})
+        dw = sum(p.get("n_words", 0) for p in pages.values())
+        dc = sum(p.get("n_characters_extracted", 0) for p in pages.values())
+        doc_data["total_pages"] = len(pages)
+        doc_data["total_words"] = dw
+        doc_data["total_characters_extracted"] = dc
+        total_words += dw
+        total_chars += dc
+
+    report.set_summary({
+        "total_documents": len(report.documents),
+        "total_pages": len(tasks),
+        "total_words": total_words,
+        "total_characters_extracted": total_chars,
+    })
+
+    report_dir = json_root.parent / "reports"
+    rpath = report.save(report_dir)
+    print(f"Report saved: {rpath}")
 
     print("Done.")
     return 0

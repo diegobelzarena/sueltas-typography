@@ -35,6 +35,7 @@ if _SRC not in sys.path:
 
 from image_processing.clustering import clusterize_gmm, tree_refine
 from image_processing.tools.inverse_compositional import register2mean
+from shared.tools.report import StepReport
 
 
 def process_document(
@@ -42,25 +43,20 @@ def process_document(
     n_jobs: int = 1,
     skip_existing: bool = False,
     device: str = "cpu",
-) -> str:
+) -> tuple[str, dict]:
     """
     Process a single document folder to cluster characters.
 
-    Args:
-        doc_dir: Path to document folder with *_data.npz files.
-        n_jobs: Number of parallel jobs for tree refinement.
-        skip_existing: Skip if clusters_all.npz already exists.
-        device: PyTorch device ('cpu' or 'cuda').
-
-    Returns:
-        Status message.
+    Returns (status_message, info_dict).
     """
     doc_dir = Path(doc_dir)
     doc_name = doc_dir.name
+    info: dict = {"doc_name": doc_name}
 
     out_path = doc_dir / "clusters_all.npz"
     if skip_existing and out_path.exists():
-        return f"SKIP: {doc_name} (clusters already exist)"
+        info["status"] = "skip"
+        return f"SKIP: {doc_name} (clusters already exist)", info
 
     print(f"\n{'='*60}")
     print(f"Processing: {doc_name}")
@@ -102,7 +98,8 @@ def process_document(
         page_heights.append(page_height)
 
     if not all_char_imgs:
-        return f"SKIP: {doc_name} (no character images found)"
+        info["status"] = "skip"
+        return f"SKIP: {doc_name} (no character images found)", info
 
     imgs = np.concatenate(all_char_imgs)
     labels = np.concatenate(all_char_labels)
@@ -172,7 +169,8 @@ def process_document(
     word_idx_filtered = word_idx[final_valid]
 
     if len(imgs_filtered) == 0:
-        return f"SKIP: {doc_name} (no valid images after filtering)"
+        info["status"] = "skip"
+        return f"SKIP: {doc_name} (no valid images after filtering)", info
 
     print(f"  Valid images: {len(imgs_filtered)}")
     print(f"  Time: {time.time() - step_start:.2f}s")
@@ -205,7 +203,8 @@ def process_document(
         print(f"  Refined to {len(np.unique(clu_pred_refined[clu_pred_refined >= 0]))} final clusters")
 
     except (np.linalg.LinAlgError, RuntimeError) as e:
-        return f"ERROR: {doc_name} - Clustering failed: {e}"
+        info.update(status="error", error=str(e))
+        return f"ERROR: {doc_name} - Clustering failed: {e}", info
 
     print(f"  Time: {time.time() - step_start:.2f}s")
 
@@ -268,10 +267,38 @@ def process_document(
         cluster_italic=cluster_italic_arr,
     )
 
+    # Compute report stats
+    n_roman_clusters = int((cluster_italic_arr <= 0.1).sum()) if len(cluster_italic_arr) else 0
+    n_italic_clusters = int((cluster_italic_arr >= 0.4).sum()) if len(cluster_italic_arr) else 0
+    n_ambiguous_clusters = int(len(cluster_italic_arr) - n_roman_clusters - n_italic_clusters)
+    # Top letters by sample count
+    top_letters = {}
+    for cl in cluster_labels_list:
+        letter, conf, count = cl[0], cl[1], cl[2]
+        top_letters[letter] = top_letters.get(letter, 0) + count
+    top_letters_sorted = sorted(top_letters.items(), key=lambda x: -x[1])[:10]
+
+    info.update(
+        status="ok",
+        n_pages=len(npz_files),
+        total_characters_input=int(len(imgs)),
+        n_invalid_removed=n_removed,
+        n_characters_clustered=int(len(imgs_filtered)),
+        n_clusters_initial=int(len(np.unique(clu_pred))),
+        n_clusters_final=int(len(cluster_means)),
+        n_roman_clusters=n_roman_clusters,
+        n_italic_clusters=n_italic_clusters,
+        n_ambiguous_clusters=n_ambiguous_clusters,
+        mean_cluster_confidence=round(float(np.mean(
+            [float(cl[1]) for cl in cluster_labels_list])), 4) if cluster_labels_list else 0,
+        top_letters=top_letters_sorted,
+    )
+
     return (
-        f"OK: {doc_name} — "
+        f"OK: {doc_name} \u2014 "
         f"{len(imgs_filtered)} chars, "
-        f"{len(cluster_means)} clusters"
+        f"{len(cluster_means)} clusters",
+        info,
     )
 
 
@@ -315,14 +342,16 @@ Examples:
     args = parser.parse_args(argv)
 
     start = time.time()
+    report = StepReport("clustering")
 
     if args.single_doc:
-        result = process_document(
+        result, info = process_document(
             args.input_dir,
             n_jobs=args.workers,
             skip_existing=args.skip_existing,
             device=args.device,
         )
+        report.add_document(info.get("doc_name", "unknown"), info)
         print(f"\n{result}")
     else:
         # Default: process each subfolder as a separate document
@@ -333,13 +362,32 @@ Examples:
         )
         print(f"Processing {len(subfolders)} documents...")
         for i, subfolder in enumerate(subfolders, 1):
-            result = process_document(
+            result, info = process_document(
                 subfolder,
                 n_jobs=args.workers,
                 skip_existing=args.skip_existing,
                 device=args.device,
             )
+            report.add_document(info.get("doc_name", subfolder.name), info)
             print(f"\n[{i}/{len(subfolders)}] {result}")
+
+    # -- Summary & report ----------------------------------------------------
+    total_input = sum(d.get("total_characters_input", 0) for d in report.documents.values())
+    total_clustered = sum(d.get("n_characters_clustered", 0) for d in report.documents.values())
+    total_clusters = sum(d.get("n_clusters_final", 0) for d in report.documents.values())
+    n_ok = sum(1 for d in report.documents.values() if d.get("status") == "ok")
+    report.set_summary({
+        "total_documents": len(report.documents),
+        "documents_processed": n_ok,
+        "total_characters_input": total_input,
+        "total_characters_clustered": total_clustered,
+        "total_clusters": total_clusters,
+    })
+
+    input_dir = Path(args.input_dir)
+    report_dir = (input_dir if args.single_doc else input_dir.parent) / "reports"
+    rpath = report.save(report_dir)
+    print(f"Report saved: {rpath}")
 
     print(f"\n{'='*60}")
     print(f"Total time: {time.time() - start:.2f}s")

@@ -32,14 +32,25 @@ import os
 import argparse
 import json
 import sys
+import time
 import torch
 import cv2
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from collections import deque
+from pathlib import Path
 from charnet.config import cfg, resolve_charnet_paths
 from charnet.modeling.model import CharNet
 from charnet.modeling.postprocessing import OrientedTextPostProcessing, load_char_dict
+
+# ---------------------------------------------------------------------------
+# Ensure the src/ packages are importable
+# ---------------------------------------------------------------------------
+_SRC = str(Path(__file__).resolve().parent.parent / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
+from shared.tools.report import StepReport
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +334,57 @@ Examples:
 
     prefetch_pool.shutdown(wait=False)
     print("Done.")
+
+    # ---- Build report from written JSON files ------------------------------
+    t_report = time.time()
+    report = StepReport("ocr_detection", detector="charnet")
+    total_words = 0
+    total_chars = 0
+    for im_file, image_id, out_dir in image_tasks:
+        json_path = os.path.join(out_dir, f"{image_id}.json")
+        doc_name = Path(im_file).parent.name
+        page_info: dict = {"page": f"{image_id}.json"}
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    words = json.load(f)
+                n_words = len(words)
+                n_chars = sum(len(w.get("chars", [])) for w in words)
+                word_confs = [w.get("text_score", 0) for w in words if "text_score" in w]
+                page_info.update(
+                    status="ok",
+                    n_words=n_words,
+                    n_characters=n_chars,
+                    mean_word_confidence=round(float(np.mean(word_confs)), 4) if word_confs else None,
+                    min_word_confidence=round(float(np.min(word_confs)), 4) if word_confs else None,
+                )
+                total_words += n_words
+                total_chars += n_chars
+            except Exception:
+                page_info["status"] = "error_reading_json"
+        else:
+            page_info["status"] = "missing_json"
+        report.add_page(doc_name, image_id, page_info)
+
+    # Per-doc aggregates
+    for doc_name, doc_data in report.documents.items():
+        pages = doc_data.get("pages", {})
+        doc_data["total_pages"] = len(pages)
+        doc_data["total_words"] = sum(p.get("n_words", 0) for p in pages.values())
+        doc_data["total_characters"] = sum(p.get("n_characters", 0) for p in pages.values())
+
+    report.set_summary({
+        "total_documents": len(report.documents),
+        "total_pages": len(image_tasks) + skipped,
+        "pages_processed": len(image_tasks),
+        "pages_skipped": skipped,
+        "total_words": total_words,
+        "total_characters": total_chars,
+    })
+
+    report_dir = Path(args.output_root).parent / "reports"
+    rpath = report.save(report_dir)
+    print(f"Report saved: {rpath}  (scan took {time.time() - t_report:.1f}s)")
     return 0
 
 

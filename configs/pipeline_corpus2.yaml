@@ -1,0 +1,19 @@
+# Pipeline configuration for corpus-2 (DocTR detector).
+#
+# Usage:
+#   python scripts/run_pipeline.py data/corpus-2 --pipeline-config configs/pipeline_corpus2.yaml
+#
+# Only detector and segmentation need to be specified here;
+# all other arguments (workers, skip-existing, etc.) are passed via CLI.
+
+detector: doctr            # "charnet" or "doctr"
+segmentation: logit_init   # "box_init" or "logit_init"
+
+# DocTR-specific settings (used when detector == doctr)
+doctr:
+  det_arch: fast_base
+
+# Source conversion settings (used by step 0 with --pdf-dir)
+source_conversion:
+  target_dpi: 150
+  dpi_csv_dir: null       # path to pre-computed DPI CSVs, or null to auto-detect
