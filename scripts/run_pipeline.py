@@ -53,6 +53,34 @@ from shared.tools.report import StepReport
 
 
 # ---------------------------------------------------------------------------
+# Subprocess helper — streams output live so the user can see progress
+# ---------------------------------------------------------------------------
+
+def _run_cmd(cmd: list[str], cwd: Path) -> tuple[bool, str]:
+    """Run a command, streaming stdout/stderr live with a prefix.
+
+    Returns (success: bool, error_message: str).
+    """
+    print(f"  Command: {' '.join(cmd)}")
+    proc = subprocess.Popen(
+        cmd, cwd=str(cwd),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    lines: list[str] = []
+    for line in proc.stdout:
+        stripped = line.rstrip()
+        lines.append(stripped)
+        print(f"    | {stripped}")
+    proc.wait()
+    if proc.returncode != 0:
+        # Return last lines as error context
+        tail = "\n".join(lines[-30:]) if lines else "unknown error"
+        return False, tail
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
 # Pipeline step definitions
 # ---------------------------------------------------------------------------
 
@@ -137,12 +165,7 @@ def run_step_0(paths, workers, skip_existing, source_conv_opts=None,
     if skip_existing:
         cmd.append("--skip-existing")
 
-    print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"],
-                           capture_output=True, text=True)
-    if result.returncode != 0:
-        return False, (result.stderr or result.stdout or "unknown error").strip()
-    return True, ""
+    return _run_cmd(cmd, paths["root"])
 
 
 def run_step_1(paths, workers, skip_existing, config_file=None, single_doc=False,
@@ -173,12 +196,7 @@ def _run_step_1_charnet(paths, workers, skip_existing, config_file, single_doc):
     if single_doc:
         cmd.append("--single-doc")
 
-    print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"],
-                           capture_output=True, text=True)
-    if result.returncode != 0:
-        return False, (result.stderr or result.stdout or "unknown error").strip()
-    return True, ""
+    return _run_cmd(cmd, paths["root"])
 
 
 def _run_step_1_doctr(paths, skip_existing, single_doc, doctr_opts):
@@ -195,12 +213,7 @@ def _run_step_1_doctr(paths, skip_existing, single_doc, doctr_opts):
     if single_doc:
         cmd.append("--single-doc")
 
-    print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"],
-                           capture_output=True, text=True)
-    if result.returncode != 0:
-        return False, (result.stderr or result.stdout or "unknown error").strip()
-    return True, ""
+    return _run_cmd(cmd, paths["root"])
 
 
 def run_step_2(paths, workers, skip_existing, single_doc=False,
@@ -219,12 +232,7 @@ def run_step_2(paths, workers, skip_existing, single_doc=False,
     if single_doc:
         cmd.append("--single-doc")
 
-    print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"],
-                           capture_output=True, text=True)
-    if result.returncode != 0:
-        return False, (result.stderr or result.stdout or "unknown error").strip()
-    return True, ""
+    return _run_cmd(cmd, paths["root"])
 
 
 def run_step_3(paths, workers, skip_existing, single_doc=False):
@@ -240,12 +248,7 @@ def run_step_3(paths, workers, skip_existing, single_doc=False):
     if single_doc:
         cmd.append("--single-doc")
 
-    print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"],
-                           capture_output=True, text=True)
-    if result.returncode != 0:
-        return False, (result.stderr or result.stdout or "unknown error").strip()
-    return True, ""
+    return _run_cmd(cmd, paths["root"])
 
 
 def run_step_4(paths, workers, skip_existing, single_doc=False):
@@ -261,12 +264,7 @@ def run_step_4(paths, workers, skip_existing, single_doc=False):
     if single_doc:
         cmd.append("--single-doc")
 
-    print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"],
-                           capture_output=True, text=True)
-    if result.returncode != 0:
-        return False, (result.stderr or result.stdout or "unknown error").strip()
-    return True, ""
+    return _run_cmd(cmd, paths["root"])
 
 
 def run_step_5(paths, workers, skip_existing):
@@ -278,12 +276,7 @@ def run_step_5(paths, workers, skip_existing):
     if skip_existing:
         cmd.append("--skip-existing")
 
-    print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"],
-                           capture_output=True, text=True)
-    if result.returncode != 0:
-        return False, (result.stderr or result.stdout or "unknown error").strip()
-    return True, ""
+    return _run_cmd(cmd, paths["root"])
 
 
 def run_step_6(paths, workers, skip_existing, acontrario_config=None):
@@ -308,12 +301,7 @@ def run_step_6(paths, workers, skip_existing, acontrario_config=None):
     if skip_existing:
         cmd.append("--load-results")
 
-    print(f"  Command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=paths["root"],
-                           capture_output=True, text=True)
-    if result.returncode != 0:
-        return False, (result.stderr or result.stdout or "unknown error").strip()
-    return True, ""
+    return _run_cmd(cmd, paths["root"])
 
 
 STEP_RUNNERS = {
@@ -368,9 +356,12 @@ def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
         corpus_root = input_path.parent
         imgs_root = input_path
     else:
-        # Assume it's the corpus root without imgs/ subfolder
+        # imgs/ doesn't exist yet — this is expected when Step 0 will
+        # create it, but we still point to the proper location.
         corpus_root = input_path
-        imgs_root = input_path
+        imgs_root = input_path / "imgs"
+        print(f"  Note: {imgs_root} does not exist yet "
+              f"(will be created by Step 0 if --pdf-dir is given)")
 
     # CharNet output goes to charnet/ sibling of imgs/
     charnet_root = corpus_root / "charnet"

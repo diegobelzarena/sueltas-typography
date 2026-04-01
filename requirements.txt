@@ -8,6 +8,7 @@ scipy>=1.11
 pyyaml
 
 torchvision
+python-doctr
 ninja
 yacs
 cython
