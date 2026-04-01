@@ -263,6 +263,26 @@ Interactive notebooks for visualization and debugging:
 
 ## Utilities
 
+### Catalogue Search
+
+Find PDFs matching catalogue signatures and optionally copy them:
+
+```bash
+python scripts/search_pdfs.py catalogue.csv data/pdfs/ --out data/selected/ --skip-existing
+```
+
+### DPI Estimation
+
+Compute original DPI and physical page dimensions for PDF or TIFF collections:
+
+```bash
+# Single CSV report
+python scripts/compute_dpi.py data/corpus-1/pdfs -o dpi_report.csv
+
+# Per-source CSV files (for use with convert_sources.py --dpi-csv-dir)
+python scripts/compute_dpi.py data/corpus-1/pdfs -o data/corpus-1/dpis --per-file --skip-existing
+```
+
 ### Source to PNG Conversion
 
 Convert scanned PDFs and/or TIFF folders to normalized PNG page images at a
@@ -279,26 +299,6 @@ python scripts/convert_sources.py data/corpus-1/pdfs data/corpus-1/imgs \
 
 # Custom target DPI
 python scripts/convert_sources.py data/corpus-1/pdfs data/corpus-1/imgs --target-dpi 300
-```
-
-### DPI Estimation
-
-Compute original DPI and physical page dimensions for PDF or TIFF collections:
-
-```bash
-# Single CSV report
-python scripts/compute_dpi.py data/corpus-1/pdfs -o dpi_report.csv
-
-# Per-source CSV files (for use with convert_sources.py --dpi-csv-dir)
-python scripts/compute_dpi.py data/corpus-1/pdfs -o data/corpus-1/dpis --per-file --skip-existing
-```
-
-### Catalogue Search
-
-Find PDFs matching catalogue signatures and optionally copy them:
-
-```bash
-python scripts/search_pdfs.py catalogue.csv data/pdfs/ --out data/selected/ --skip-existing
 ```
 
 ### Validate Pipeline Outputs

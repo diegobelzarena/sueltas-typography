@@ -28,6 +28,19 @@ import pymupdf
 from PIL import Image
 from tqdm import tqdm
 
+# ---------------------------------------------------------------------------
+# Ensure the src/ packages are importable
+# ---------------------------------------------------------------------------
+_SRC = str(Path(__file__).resolve().parent.parent / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
+from image_processing.pdf_utils import (
+    clamp_dpi,
+    get_tiff_dpi,
+    select_best_image,
+)
+
 
 # ---------------------------------------------------------------------------
 # DPI extraction
@@ -47,18 +60,27 @@ COLUMN_ORDER = [
 
 
 def get_tiff_info(file_path: Path) -> dict:
-    """Extract DPI and dimensions from a TIFF file."""
+    """Extract DPI and dimensions from a TIFF file.
+
+    Handles resolution-unit (tag 296): dpi, dpcm, or undefined.
+    Clamps suspicious values to [72, 1200].
+    """
     with Image.open(file_path) as img:
         w_px, h_px = img.size
-        dpi = img.info.get("dpi", (None, None))
-        dpi_w, dpi_h = dpi
+        dpi_w, dpi_h = get_tiff_dpi(img)
+
+        # Sanity-clamp
+        if dpi_w is not None:
+            dpi_w = clamp_dpi(dpi_w, file_path.name)
+        if dpi_h is not None:
+            dpi_h = clamp_dpi(dpi_h, file_path.name)
 
         w_in = w_px / dpi_w if dpi_w else None
         h_in = h_px / dpi_h if dpi_h else None
 
         return {
-            "DPI (width)": float(dpi_w) if dpi_w else None,
-            "DPI (height)": float(dpi_h) if dpi_h else None,
+            "DPI (width)": dpi_w,
+            "DPI (height)": dpi_h,
             "width (in)": w_in,
             "height (in)": h_in,
             "width (cm)": w_in * 2.54 if w_in else None,
@@ -70,8 +92,10 @@ def get_tiff_info(file_path: Path) -> dict:
 def get_pdf_info(pdf_path: Path) -> list[dict]:
     """Extract page dimensions and effective DPI from a PDF.
 
-    Returns one dict per page with DPI estimated from the ratio of
-    embedded image pixels to the PDF page size (in points → inches).
+    Uses :func:`select_best_image` to pick the scan image (filtering out
+    masks and thumbnails), then estimates DPI from the ratio of image
+    pixels to the PDF page size (in points → inches).  Results are
+    sanity-clamped to [72, 1200].
     """
     pages_data = []
     with pymupdf.open(str(pdf_path)) as doc:
@@ -79,16 +103,18 @@ def get_pdf_info(pdf_path: Path) -> list[dict]:
             w_in = page.rect.width / 72
             h_in = page.rect.height / 72
 
-            images = page.get_images()
-            if not images:
+            best_xref, w_px, h_px, _masks = select_best_image(page, doc)
+            if best_xref == 0:
                 continue
-
-            xref = images[0][0]
-            pix = pymupdf.Pixmap(doc, xref)
-            w_px, h_px = pix.width, pix.height
 
             dpi_w = w_px / w_in if w_in else None
             dpi_h = h_px / h_in if h_in else None
+
+            label = f"{pdf_path.stem} page {i}"
+            if dpi_w is not None:
+                dpi_w = clamp_dpi(dpi_w, label)
+            if dpi_h is not None:
+                dpi_h = clamp_dpi(dpi_h, label)
 
             pages_data.append({
                 "page": f"page_{i}.png",

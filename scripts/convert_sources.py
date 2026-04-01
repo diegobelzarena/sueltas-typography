@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import statistics
 import sys
 import time
 from collections.abc import Callable
@@ -49,6 +48,13 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 from shared.tools.report import StepReport
+from image_processing.pdf_utils import (
+    clamp_dpi,
+    get_tiff_dpi,
+    median_dpi,
+    round_dpi,
+    select_best_image,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +84,10 @@ def _extract_layered(pdf_path: Path, out_dir: Path, target_dpi: int) -> int:
     """
     doc = pymupdf.open(str(pdf_path))
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Estimate DPI for scaling
+    orig_dpi = _get_dpi_from_pdf(doc)
+    scale = target_dpi / orig_dpi if orig_dpi else 1.0
     count = 0
 
     for idx, page in enumerate(doc):
@@ -106,7 +116,12 @@ def _extract_layered(pdf_path: Path, out_dir: Path, target_dpi: int) -> int:
                 mask = np.frombuffer(pixm.samples, dtype=np.bool_).reshape((h, w))
                 img[mask] = fg[mask]
 
-        Image.fromarray(img).save(str(out_dir / f"page_{idx}.png"))
+        result = Image.fromarray(img)
+        if abs(scale - 1.0) > 0.01:
+            new_w = int(result.width * scale)
+            new_h = int(result.height * scale)
+            result = result.resize((new_w, new_h), resample=Image.LANCZOS)
+        result.save(str(out_dir / f"page_{idx}.png"), dpi=(target_dpi, target_dpi))
         count += 1
 
     doc.close()
@@ -133,9 +148,7 @@ def _get_dpi_from_csv(name: str, dpi_csv_dir: Path) -> float | None:
             if col in df.columns:
                 values.extend(df[col].dropna().tolist())
         if values:
-            median = statistics.median(values)
-            rounded = int(round(median / 50) * 50)
-            return max(rounded, 50)
+            return median_dpi(values, step=25)
     except Exception as e:
         print(f"  Warning: failed to read DPI csv {csv_path.name}: {e}")
 
@@ -146,43 +159,36 @@ def _get_dpi_from_pdf(doc: pymupdf.Document) -> float:
     """Estimate DPI from embedded image metadata in the PDF."""
     dpi_values: list[float] = []
     for page in doc:
-        imgs = page.get_images()
-        if not imgs:
+        best_xref, _, _, _ = select_best_image(page, doc)
+        if best_xref == 0:
             continue
-        pix = pymupdf.Pixmap(doc, imgs[0][0])
+        pix = pymupdf.Pixmap(doc, best_xref)
         if pix.xres:
-            dpi_values.append(pix.xres)
+            dpi_values.append(clamp_dpi(pix.xres))
         elif pix.yres:
-            dpi_values.append(pix.yres)
+            dpi_values.append(clamp_dpi(pix.yres))
 
-    if dpi_values:
-        median = statistics.median(dpi_values)
-        rounded = int(round(median / 50) * 50)
-        return max(rounded, 50)
-
-    return 150  # fallback
+    return median_dpi(dpi_values, step=25)
 
 
 def _get_dpi_from_tiffs(tiff_files: list[Path]) -> float:
-    """Estimate DPI from TIFF metadata across a set of page files."""
+    """Estimate DPI from TIFF metadata across a set of page files.
+
+    Handles resolution-unit (tag 296) correctly via :func:`get_tiff_dpi`.
+    """
     dpi_values: list[float] = []
     for tf in tiff_files:
         try:
             with Image.open(tf) as img:
-                dpi = img.info.get("dpi", (None, None))
-                if dpi[0]:
-                    dpi_values.append(float(dpi[0]))
-                if dpi[1]:
-                    dpi_values.append(float(dpi[1]))
+                dpi_w, dpi_h = get_tiff_dpi(img)
+                if dpi_w is not None:
+                    dpi_values.append(clamp_dpi(dpi_w, tf.name))
+                if dpi_h is not None:
+                    dpi_values.append(clamp_dpi(dpi_h, tf.name))
         except Exception:
             continue
 
-    if dpi_values:
-        median = statistics.median(dpi_values)
-        rounded = int(round(median / 50) * 50)
-        return max(rounded, 50)
-
-    return 150  # fallback
+    return median_dpi(dpi_values, step=25)
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +197,9 @@ def _get_dpi_from_tiffs(tiff_files: list[Path]) -> float:
 
 def _pixmap_to_pil(pix: pymupdf.Pixmap) -> Image.Image:
     """Convert a PyMuPDF Pixmap to a Pillow Image."""
+    # CMYK pixmaps: convert to RGB first to avoid misinterpreting channels
+    if pix.colorspace and pix.colorspace.n == 4 and not pix.alpha:
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
     mode = "RGB" if pix.n >= 3 else "L"
     if pix.alpha:
         mode += "A"
@@ -240,17 +249,24 @@ def extract_pdf(
     warnings: list[str] = []
 
     for idx, page in enumerate(doc):
-        images = page.get_images()
+        images = page.get_images(full=True)
         n_layers = len(images)
         if not images:
             page_details.append({"page": idx, "n_layers": 0, "status": "skip_no_images"})
             continue
-        if n_layers != 1:
-            msg = f"{pdf_stem} page {idx} has {n_layers} images (expected 1)"
-            warnings.append(msg)
-            print(f"  Warning: {msg}")
 
-        pix = pymupdf.Pixmap(doc, images[0][0])
+        best_xref, _best_w, _best_h, mask_xrefs = select_best_image(page, doc)
+        if best_xref == 0:
+            page_details.append({"page": idx, "n_layers": n_layers, "status": "skip_no_valid_image"})
+            continue
+
+        if n_layers != 1:
+            msg = (f"{pdf_stem} page {idx} has {n_layers} images "
+                   f"({len(mask_xrefs)} mask(s)), selected xref {best_xref}")
+            warnings.append(msg)
+            print(f"  Info: {msg}")
+
+        pix = pymupdf.Pixmap(doc, best_xref)
 
         if abs(scale - 1.0) > 0.01:
             img = _pixmap_to_pil(pix)
