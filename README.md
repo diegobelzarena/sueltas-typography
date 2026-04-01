@@ -32,50 +32,142 @@ All configuration files live in the `configs/` directory:
 | File | Description |
 |------|-------------|
 | `configs/icdar2015_hourglass88.yaml` | CharNet model config (input size, model weights path, char dictionary, lexicon, detection thresholds) |
+| `configs/pipeline_corpus2.yaml` | Pipeline config for DocTR detector + logit segmentation (corpus 2) |
 | `configs/typographic_distances.yaml` | Typographic distance parameters (italic thresholds, filtering, registration, distance metric) |
 | `configs/acontrario_corpus1.yaml` | A contrario analysis config for corpus 1 (analysis parameters, printer colours, figure settings) |
 | `configs/acontrario_corpus2.yaml` | A contrario analysis config for corpus 2 |
 
 **CharNet config** (`configs/icdar2015_hourglass88.yaml`): Paths for `WEIGHT`, `CHAR_DICT_FILE`, and `WORD_LEXICON_PATH` are relative to `src/charnet_src/` and are resolved automatically at runtime — the repository works from any location.
 
-You can override the config file for most steps via command-line arguments (e.g., `--config`, `--charnet-config`).
+### Pipeline Config (CharNet vs DocTR)
+
+By default the pipeline uses **CharNet** for OCR detection (Step 1) and
+**box_init** segmentation (Step 2).  To use **DocTR** instead, pass a
+pipeline config with `--pipeline-config`:
+
+```yaml
+# configs/pipeline_corpus2.yaml
+detector: doctr            # "charnet" or "doctr"
+segmentation: logit_init   # "box_init" or "logit_init"
+
+doctr:
+  det_arch: fast_base      # DocTR detection architecture
+
+source_conversion:
+  target_dpi: 150          # for Step 0 (--pdf-dir)
+  dpi_csv_dir: null        # path to pre-computed DPI CSVs, or null
+```
+
+| Key | Values | Default | Effect |
+|-----|--------|---------|--------|
+| `detector` | `charnet`, `doctr` | `charnet` | Which OCR engine to use in Step 1 |
+| `segmentation` | `box_init`, `logit_init` | `box_init` | Character segmentation method in Step 2 |
+| `doctr.det_arch` | any [DocTR arch](https://mindee.github.io/doctr/) | `fast_base` | Detection backbone (only when `detector: doctr`) |
+| `source_conversion.target_dpi` | integer | `150` | Target DPI for PDF/TIFF conversion (Step 0) |
+| `source_conversion.dpi_csv_dir` | path or `null` | `null` | Pre-computed DPI CSVs directory |
+
+You can also override individual config files via CLI flags (`--charnet-config`, `--acontrario-config`).
 
 ---
 
 ## Quick Start
 
-
 Run the complete pipeline on a corpus with a single command:
 
 ```bash
+# CharNet (default) — corpus with images already extracted
 python scripts/run_pipeline.py data/corpus-1 --steps 1,2,3,4,5,6 --workers 4
+
+# DocTR — use a pipeline config to switch detector and segmentation
+python scripts/run_pipeline.py data/corpus-2 \
+    --pipeline-config configs/pipeline_corpus2.yaml \
+    --steps 1,2,3,4,5,6 --workers 4
 ```
 
-Or run individual steps (see below for details).
+### Starting from PDFs
 
-You can also run steps 1–4 on a single document folder:
+If you have a folder of scanned PDFs (or TIFF folders) and a metadata CSV,
+the pipeline can create the corpus structure and convert sources automatically
+via **Step 0**:
+
+```bash
+python scripts/run_pipeline.py data/corpus-new \
+    --pdf-dir /path/to/scanned-pdfs \
+    --csv /path/to/metadata.csv \
+    --pipeline-config configs/pipeline_corpus2.yaml \
+    --steps 0,1,2,3,4,5,6 --workers 4
+```
+
+This will:
+1. Create the corpus directory structure (`imgs/`, `charnet/`, `results/`, `dpis/`, `reports/`)
+2. Copy the metadata CSV into the corpus folder
+3. Convert all PDFs/TIFFs to normalized PNGs at the configured DPI (default 150)
+4. Run the remaining pipeline steps
+
+> **Note:** `--pdf-dir` automatically enables Step 0 even if not listed in `--steps`.
+
+### Single document mode
+
+Run steps 1–4 on a single document folder (useful for testing or reprocessing):
 
 ```bash
 python scripts/run_pipeline.py data/corpus-1/imgs/doc001 --single-doc --steps 1,2,3,4 --workers 4
 ```
 
-This will process only the specified document for detection, extraction, italic detection, and clustering.
+Steps 0, 5, and 6 are automatically skipped in single-doc mode (they require the full corpus).
+
+### Pipeline reports
+
+Every step produces a JSON report in `{corpus}/reports/` with detailed
+statistics (page counts, character counts, cluster counts, warnings, etc.).
+After all steps complete, a combined `pipeline_report.json` is assembled
+automatically.  See [Reports](#reports) for details.
+
+### All CLI options
+
+| Flag | Description |
+|------|-------------|
+| `--steps` | Comma-separated step numbers to run (default: `1,2,3,4`) |
+| `--pipeline-config` | YAML config for detector, segmentation, and conversion settings |
+| `--pdf-dir` | Source directory of PDFs/TIFFs for Step 0 |
+| `--csv` | Metadata CSV to copy into corpus (used with `--pdf-dir`) |
+| `--single-doc` | Process a single document folder instead of full corpus |
+| `--workers N` | Parallel workers (default: ncpus-1) |
+| `--skip-existing` | Skip documents/pages that already have outputs |
+| `--charnet-config` | Override CharNet config file path |
+| `--acontrario-config` | Override a contrario YAML config path |
+| `--dry-run` | Show what would be run without executing |
 
 ---
 
 
 ## Pipeline Overview
 
-The pipeline assumes document images (PNG) are already available, organized as:
+The full pipeline has **7 steps** (0–6).  Step 0 is optional — it converts
+raw PDFs/TIFFs to PNGs.  Steps 1–6 operate on the extracted images.
+
+### Expected corpus structure
+
 ```
-data/corpus-1/imgs/
-  document_001/
-    page_001.png
-    page_002.png
-    ...
-  document_002/
-    ...
+data/corpus-1/
+  ordered-table-corpus1.csv   # metadata CSV (required)
+  imgs/                        # page images (PNG)
+    document_001/
+      page_0.png
+      page_1.png
+      ...
+    document_002/
+      ...
+  charnet/                     # OCR + extraction outputs (created by steps 1–4)
+  results/                     # a contrario outputs (step 6)
+  dpis/                        # precomputed DPI CSVs (optional)
+  reports/                     # per-step JSON reports (auto-created)
+  distances_roman.npz          # step 5 output
+  distances_italic.npz         # step 5 output
 ```
+
+If you start from PDFs with `--pdf-dir`, the pipeline creates this structure
+automatically (see [Quick Start](#quick-start)).
 
 ### Corpus Metadata CSV
 
@@ -88,21 +180,63 @@ data/corpus-1/imgs/
 
 This file is used for printer attribution and document mapping. If missing, the pipeline will run but printer information will be marked as unknown and some features may be unavailable.
 
-### Step 1 — OCR with CharNet
+---
 
-Detect characters and words using the CharNet neural network.  Before
-running, make sure the pretrained weights are present in
+### Step 0 — Source Conversion (optional)
+
+Convert scanned PDFs and/or TIFF folders to normalized PNG page images.
+This step is only needed when starting from raw scans rather than
+pre-extracted images.  It is triggered automatically when `--pdf-dir` is
+passed to `run_pipeline.py`, or can be run standalone:
+
+```bash
+python scripts/convert_sources.py data/corpus-1/pdfs data/corpus-1/imgs \
+    --dpi-csv-dir data/corpus-1/dpis --workers 8 --skip-existing
+```
+
+The original DPI is determined from precomputed CSVs (preferred) or embedded
+PDF/TIFF metadata, then images are rescaled to the target DPI (default 150).
+Multi-layer PDFs are handled automatically — masks are filtered out and the
+largest image per page is selected.
+
+**Output:** `data/corpus-1/imgs/{document}/page_{n}.png`
+
+---
+
+### Step 1 — OCR Detection + Recognition
+
+Detect characters and words using **CharNet** (default) or **DocTR**.
+
+#### CharNet (default)
+
+Make sure the pretrained weights are present in
 `src/charnet_src/weights/icdar2015_hourglass88.pth` (see
 `src/charnet_src/README.md` for download instructions and a fallback mirror).
-
-A CUDA-capable GPU is recommended; if none is available, CharNet falls back
-to CPU (significantly slower).
+A CUDA-capable GPU is recommended; CPU fallback is supported but slow.
 
 ```bash
 python scripts/run_charnet.py configs/icdar2015_hourglass88.yaml \
     data/corpus-1/imgs  data/corpus-1/charnet \
     --workers 4
 ```
+
+#### DocTR (alternative)
+
+DocTR uses a detection backbone (e.g. `fast_base`, `db_resnet50`) plus a
+custom CRNN recognition head with CTC-based character boundary decoding.
+It produces CharNet-compatible JSON so all downstream steps work identically.
+
+```bash
+# Standalone
+python scripts/run_doctr.py data/corpus-2/imgs data/corpus-2/charnet
+
+# Via pipeline (recommended)
+python scripts/run_pipeline.py data/corpus-2 \
+    --pipeline-config configs/pipeline_corpus2.yaml --steps 1
+```
+
+The pipeline config selects the detector: set `detector: doctr` and
+configure `doctr.det_arch` (see [Pipeline Config](#pipeline-config-charnet-vs-doctr)).
 
 **Output:** `data/corpus-1/charnet/{document}/{page}.json` — word/character bounding boxes with recognition scores.
 
@@ -245,6 +379,28 @@ document indices without reordering by typographic weights.
 
 ---
 
+## Reports
+
+Every pipeline step writes a JSON report to `{corpus}/reports/`.  When
+running via `run_pipeline.py`, all individual reports are merged into a
+combined `pipeline_report.json` at the end.
+
+| Report file | Step | Key statistics |
+|-------------|------|----------------|
+| `convert_sources_report.json` | 0 | Sources processed, pages extracted, DPI, scale factors, warnings on multi-layer PDFs |
+| `ocr_detection_report.json` | 1 | Words/characters per page, mean confidence, processing time |
+| `character_extraction_report.json` | 2 | Characters extracted per page, segmentation method used |
+| `italic_detection_report.json` | 3 | Roman/italic counts, italic ratio, Otsu threshold, stroke quantiles |
+| `clustering_report.json` | 4 | Cluster counts (initial/final/roman/italic), mean confidence, top letters |
+| `typographic_distances_report.json` | 5 | Documents compared, letters used, mean/median distance per style |
+| `acontrario_report.json` | 6 | Significant pairs, n̂₁ statistics, ordering method, output files |
+| `pipeline_report.json` | all | Steps run, detector, segmentation, workers, total time, all step reports |
+
+Reports are plain JSON — useful for debugging, logging, and feeding into
+downstream dashboards or analysis notebooks.
+
+---
+
 ## Notebooks
 
 Interactive notebooks for visualization and debugging:
@@ -320,22 +476,30 @@ python scripts/generate_readme_images.py
 
 ```
 scripts/                # Pipeline entry points
-  ├── run_pipeline.py   # Master pipeline (steps 1–6)
+  ├── run_pipeline.py           # Master pipeline (steps 0–6)
+  ├── convert_sources.py        # Step 0: PDF/TIFF → PNG conversion
   ├── run_charnet.py            # Step 1: CharNet OCR
+  ├── run_doctr.py              # Step 1: DocTR OCR (alternative)
   ├── character_extraction.py   # Step 2: MCP Character Extraction
   ├── italic_detection.py       # Step 3: Structure Tensor Italic detection
   ├── clustering.py             # Step 4: Unsupervised Clustering
   ├── typographic_distances.py  # Step 5: Typographic Distance Calculation
-  └── run_acontrario.py         # Step 6: A contrario Analysis
+  ├── run_acontrario.py         # Step 6: A contrario Analysis
+  ├── compute_dpi.py            # Utility: DPI estimation
+  ├── search_pdfs.py            # Utility: catalogue search
+  └── validate_outputs.py       # Utility: output validation
 configs/                # YAML configuration files
   ├── icdar2015_hourglass88.yaml  # CharNet model config
+  ├── pipeline_corpus2.yaml       # Pipeline config (DocTR + logit_init)
   ├── typographic_distances.yaml  # Distance computation params
   ├── acontrario_corpus1.yaml     # A contrario (corpus 1)
   └── acontrario_corpus2.yaml     # A contrario (corpus 2)
 src/
   ├── acontrario/       # A contrario algorithms + visualization
   ├── charnet_src/      # CharNet OCR module (third-party)
-  ├── image_processing/ # Orientation, segmentation, clustering
+  ├── doctr_src/        # DocTR recognition + CTC decoding
+  ├── image_processing/ # Orientation, segmentation, clustering, PDF utilities
+  ├── shared/           # Shared tools (reporting)
   └── typ_distances/    # Distance utilities
 notebooks/              # Interactive visualization notebooks
 docs/images/            # README figures (auto-generated)
