@@ -58,18 +58,19 @@ def build_predictor(device: str = "cuda",
     """Build the DocTR OCR predictor with custom recognition."""
     det_pred = detection_predictor(
         det_arch, pretrained=True,
-        assume_straight_pages=False,
+        assume_straight_pages=True,
         preserve_aspect_ratio=True,
     )
     reco_pred = create_custom_recognition_predictor(
         arch="crnn_vgg16_bn", pretrained=True,
         batch_size=32,
         dynamic_width_batching=True,
+        split_wide_crops=True,
     )
     predictor = CustomOCRPredictor(
         det_predictor=det_pred,
         reco_predictor=reco_pred,
-        assume_straight_pages=False,
+        assume_straight_pages=True,
         preserve_aspect_ratio=True,
     )
     if device == "cuda":

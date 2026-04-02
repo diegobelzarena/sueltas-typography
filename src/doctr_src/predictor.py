@@ -311,41 +311,40 @@ class CustomOCRPredictor(nn.Module, _OCRPredictor):
         loc_preds: list,
         page_shapes: list[tuple[int, int]]
     ) -> list[dict]:
-        """
-        Convert normalized location predictions to pixel coordinates.
-        
-        Args:
-            loc_preds: Location predictions (normalized 0-1)
-            page_shapes: Original page shapes (h, w)
-            
-        Returns:
-            List of dicts with geometry info for each word
-        """
         word_geometries = []
-        
+
         for page_idx, page_loc_preds in enumerate(loc_preds):
             h, w = page_shapes[page_idx]
-            
+
             for word_box in page_loc_preds:
-                # word_box is typically shape (4, 2) with normalized coordinates
-                geometry = word_box.tolist()  # Convert to list for JSON serialization
-                
-                # Calculate pixel coordinates
-                pixel_coords = []
-                for pt in word_box:
-                    pixel_coords.append([int(pt[0] * w), int(pt[1] * h)])
-                
-                # Calculate bounding box
+                box = np.asarray(word_box)
+
+                # Straight boxes from DocTR internals: [xmin, ymin, xmax, ymax, ...]
+                if box.ndim == 1:
+                    if box.shape[0] < 4:
+                        raise ValueError(f"Unexpected straight box shape: {box.shape}")
+                    x1, y1, x2, y2 = map(float, box[:4])
+                    geometry = [[x1, y1], [x2, y2]]
+
+                # Rotated boxes / polygons: [[x1, y1], [x2, y2], ...]
+                elif box.ndim == 2 and box.shape[1] == 2:
+                    geometry = box.tolist()
+
+                else:
+                    raise ValueError(f"Unexpected box shape: {box.shape}")
+
+                pixel_coords = [[int(x * w), int(y * h)] for x, y in geometry]
+
                 pixel_array = np.array(pixel_coords)
                 x1, y1 = pixel_array[:, 0].min(), pixel_array[:, 1].min()
                 x2, y2 = pixel_array[:, 0].max(), pixel_array[:, 1].max()
-                
+
                 word_geometries.append({
-                    'page': page_idx,
-                    'geometry_normalized': geometry,
-                    'geometry_pixel': pixel_coords,
-                    'bbox': [x1, y1, x2, y2],
-                    'center': [(x1 + x2) / 2, (y1 + y2) / 2]
+                    "page": page_idx,
+                    "geometry_normalized": geometry,
+                    "geometry_pixel": pixel_coords,
+                    "bbox": [x1, y1, x2, y2],
+                    "center": [(x1 + x2) / 2, (y1 + y2) / 2],
                 })
-        
+
         return word_geometries

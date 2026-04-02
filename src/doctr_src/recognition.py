@@ -518,6 +518,7 @@ def create_custom_recognition_predictor(
     symmetric_pad: bool = False,
     batch_size: int = 128,
     dynamic_width_batching: bool = False,
+    split_wide_crops: bool = False,
     **kwargs: Any
 ) -> CustomRecognitionPredictor:
     """
@@ -587,7 +588,7 @@ def create_custom_recognition_predictor(
     preprocessor = CustomPreProcessor(input_shape, **kwargs)
     
     # Create custom predictor
-    predictor = CustomRecognitionPredictor(preprocessor, _model)
+    predictor = CustomRecognitionPredictor(preprocessor, _model, split_wide_crops=split_wide_crops)
 
     return predictor
 
