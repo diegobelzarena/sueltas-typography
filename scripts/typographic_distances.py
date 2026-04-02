@@ -482,7 +482,7 @@ Examples:
     )
     parser.add_argument(
         "corpus_dir",
-        help="Corpus directory (containing charnet/ subfolder with clustering results)",
+        help="Corpus directory (containing ocr/{engine}/ or charnet/ with clustering results)",
     )
     parser.add_argument(
         "--style",
@@ -499,10 +499,36 @@ Examples:
         action="store_true",
         help="Skip styles that already have distance files",
     )
+    parser.add_argument(
+        "--ocr-dir",
+        help="Path to OCR output directory with clustering results "
+             "(default: auto-detect from ocr/ or charnet/)",
+    )
+    parser.add_argument(
+        "--report-dir",
+        help="Directory for the step report JSON (default: {corpus}/reports)",
+    )
     args = parser.parse_args(argv)
 
     corpus_dir = Path(args.corpus_dir).resolve()
-    charnet_dir = corpus_dir / "charnet"
+    if args.ocr_dir:
+        charnet_dir = Path(args.ocr_dir).resolve()
+    else:
+        # Prefer ocr/ layout, fall back to legacy charnet/
+        ocr_root = corpus_dir / "ocr"
+        if ocr_root.is_dir():
+            engines = [d for d in sorted(ocr_root.iterdir()) if d.is_dir()]
+            if len(engines) == 1:
+                charnet_dir = engines[0]
+            elif engines:
+                print(f"Multiple OCR engines found under {ocr_root}: "
+                      f"{[e.name for e in engines]}")
+                print("Specify one with --ocr-dir")
+                return 1
+            else:
+                charnet_dir = corpus_dir / "charnet"
+        else:
+            charnet_dir = corpus_dir / "charnet"
 
     # Validate paths
     if not corpus_dir.is_dir():
@@ -510,7 +536,7 @@ Examples:
         return 1
 
     if not charnet_dir.is_dir():
-        print(f"ERROR: CharNet output not found: {charnet_dir}", file=sys.stderr)
+        print(f"ERROR: OCR output not found: {charnet_dir}", file=sys.stderr)
         return 1
 
     # Load config
@@ -554,7 +580,7 @@ Examples:
         print(f"  {r}")
     print(f"\nTotal time: {time.time() - start:.1f}s")
 
-    report_dir = corpus_dir / "reports"
+    report_dir = Path(args.report_dir) if args.report_dir else corpus_dir / "reports"
     rpath = report.save(report_dir)
     print(f"Report saved: {rpath}")
 

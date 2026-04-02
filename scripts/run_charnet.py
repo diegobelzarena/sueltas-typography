@@ -192,6 +192,9 @@ Examples:
                         help="Skip images that already have JSON output")
     parser.add_argument("--single-doc", action="store_true",
                         help="Process a single folder of PNGs as one document")
+    parser.add_argument("--report-dir",
+                        help="Directory for the step report JSON "
+                             "(default: {output_root}/../reports)")
     args = parser.parse_args(argv)
 
     cfg.merge_from_file(args.config_file)
@@ -382,7 +385,7 @@ Examples:
         "total_characters": total_chars,
     })
 
-    report_dir = Path(args.output_root).parent / "reports"
+    report_dir = Path(args.report_dir) if args.report_dir else Path(args.output_root).parent / "reports"
     rpath = report.save(report_dir)
     print(f"Report saved: {rpath}  (scan took {time.time() - t_report:.1f}s)")
     return 0

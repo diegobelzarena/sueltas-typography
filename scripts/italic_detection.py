@@ -356,6 +356,10 @@ Examples:
         default=0,
         help="Parallel workers for multi-document mode (default: ncpus-1, 0 = auto)",
     )
+    parser.add_argument(
+        "--report-dir",
+        help="Directory for the step report JSON (default: auto)",
+    )
     args = parser.parse_args(argv)
 
     start = time.time()
@@ -420,7 +424,8 @@ Examples:
     })
 
     input_dir = Path(args.input_dir)
-    report_dir = (input_dir if args.single_doc else input_dir.parent) / "reports"
+    report_dir = Path(args.report_dir) if args.report_dir else (
+        (input_dir if args.single_doc else input_dir.parent) / "reports")
     rpath = report.save(report_dir)
     print(f"Report saved: {rpath}")
 

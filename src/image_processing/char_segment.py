@@ -522,7 +522,8 @@ def find_vert_paths_logit_init(
     return paths_list
 
 
-def char_segment_logit_init(img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad, widths):
+def char_segment_logit_init(img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad, widths,
+                            img_flat=None):
     """Character segmentation using logit-initialised boxes (DocTR path).
 
     Same contract as :func:`char_segment` but uses
@@ -531,16 +532,24 @@ def char_segment_logit_init(img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad
 
     Args:
         img_c: Grayscale image, shape (h, w), values in [0, 1].
+            Used for path finding (horizontal + vertical cost paths).
         tblrs: Character boxes, shape (n, 4).
         box_clu: Line cluster assignments, shape (n,).
         refwidth: Mean character width (float).
         top_pad: Top padding size (pixels).
         bottom_pad: Bottom padding size (pixels).
         widths: Per-character widths array.
+        img_flat: Optional bg-flattened image, shape (h, w), values in
+            [0, 1].  When provided, mask filtering (white-pixel removal)
+            uses this image instead of *img_c*.  This lets path finding
+            exploit full grayscale contrast while masks are cleaned
+            against the flattened background.
 
     Returns:
         char_data: list of ((t, b, l, r), mask) tuples.
     """
+    if img_flat is None:
+        img_flat = img_c
     h, w = img_c.shape
     char_data = []
     for i in range(1, box_clu.max() + 1):
@@ -551,6 +560,7 @@ def char_segment_logit_init(img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad
         l0 = max(0, boxes[boxes[:, 2].argmin(), 2] - int(refwidth))
         r0 = min(w, boxes[boxes[:, 3].argmax(), 3] + int(refwidth) + 1)
         crop = img_c[:, l0:r0]
+        crop_flat = img_flat[:, l0:r0]
         boxes[:, 2:] -= l0
         tpath, bpath = find_hor_paths_logit_init(crop, boxes, top_pad, bottom_pad)
         canv = np.zeros(crop.shape, dtype=bool)
@@ -590,7 +600,7 @@ def char_segment_logit_init(img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad
             canv_char = np.pad(canv_char[:, l:r + 1], pad_width=1)
             char_comps = ski.measure.label(~canv_char, connectivity=1)
             premask = (char_comps != char_comps[0, 0])[1:-1, 1:-1]
-            premask &= (crop[:, l:r + 1] != 1)
+            premask &= (crop_flat[:, l:r + 1] != 1)
             if not premask.any():
                 continue
             hprojs, = np.nonzero(np.any(premask, axis=1))
@@ -610,11 +620,13 @@ def char_segment_logit_init(img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad
 
 def segment_characters(img_c, tblrs, box_clu, refwidth, *,
                        mode="box_init",
-                       top_pad=1, bottom_pad=1, widths=None):
+                       top_pad=1, bottom_pad=1, widths=None,
+                       img_flat=None):
     """Unified entry point for character segmentation.
 
     Args:
         img_c: Grayscale image, shape (h, w), values in [0, 1].
+            Used for path finding in ``logit_init`` mode.
         tblrs: Character boxes, shape (n, 4).
         box_clu: Line cluster assignments, shape (n,).
         refwidth: Mean character width (float).
@@ -623,6 +635,8 @@ def segment_characters(img_c, tblrs, box_clu, refwidth, *,
         top_pad: Top padding (only used by ``logit_init``).
         bottom_pad: Bottom padding (only used by ``logit_init``).
         widths: Per-character widths (only used by ``logit_init``).
+        img_flat: Optional bg-flattened image for mask filtering
+            (only used by ``logit_init``).
 
     Returns:
         For ``box_init``: (char_data, idxs_input) — list of ((t,b,l,r), mask)
@@ -635,6 +649,7 @@ def segment_characters(img_c, tblrs, box_clu, refwidth, *,
     elif mode == "logit_init":
         return char_segment_logit_init(
             img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad, widths,
+            img_flat=img_flat,
         )
     else:
         raise ValueError(f"Unknown segmentation mode: {mode!r}. "

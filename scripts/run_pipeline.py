@@ -93,23 +93,23 @@ STEPS = {
     1: {
         "name": "OCR Detection + Recognition",
         "description": "Detect characters and words (CharNet or DocTR)",
-        "output_check": lambda p: (p["charnet"] / next(p["imgs"].iterdir()).name).exists()
+        "output_check": lambda p: (p["ocr_dir"] / next(p["imgs"].iterdir()).name).exists()
             if any(p["imgs"].iterdir()) else False,
     },
     2: {
         "name": "Character Extraction",
         "description": "Segment characters via minimum cost paths",
-        "output_check": lambda p: any(p["charnet"].rglob("*_data.npz")),
+        "output_check": lambda p: any(p["ocr_dir"].rglob("*_data.npz")),
     },
     3: {
         "name": "Italic Detection",
         "description": "Classify italic/round via structure tensor",
-        "output_check": lambda p: any(p["charnet"].rglob("italic_labels.npz")),
+        "output_check": lambda p: any(p["ocr_dir"].rglob("italic_labels.npz")),
     },
     4: {
         "name": "Tree Clustering",
         "description": "Unsupervised GMM + tree clustering",
-        "output_check": lambda p: any(p["charnet"].rglob("clusters_all.npz")),
+        "output_check": lambda p: any(p["ocr_dir"].rglob("clusters_all.npz")),
     },
     5: {
         "name": "Typographic Distances",
@@ -159,6 +159,7 @@ def run_step_0(paths, workers, skip_existing, source_conv_opts=None,
         str(paths["imgs"]),
         "--target-dpi", str(target_dpi),
         "--workers", str(workers),
+        "--report-dir", str(paths["reports_dir"]),
     ]
     if dpi_csv_dir:
         cmd.extend(["--dpi-csv-dir", str(dpi_csv_dir)])
@@ -187,8 +188,9 @@ def _run_step_1_charnet(paths, workers, skip_existing, config_file, single_doc):
         sys.executable, "scripts/run_charnet.py",
         config_file,
         str(paths["imgs"]),
-        str(paths["charnet"]),
+        str(paths["ocr_dir"]),
         "--workers", str(workers),
+        "--report-dir", str(paths["reports_dir"]),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
@@ -204,10 +206,11 @@ def _run_step_1_doctr(paths, skip_existing, single_doc, doctr_opts):
     cmd = [
         sys.executable, "scripts/run_doctr.py",
         str(paths["imgs"]),
-        str(paths["charnet"]),
+        str(paths["ocr_dir"]),
     ]
     det_arch = doctr_opts.get("det_arch", "db_resnet50")
     cmd.extend(["--det-arch", det_arch])
+    cmd.extend(["--report-dir", str(paths["reports_dir"])])
     if skip_existing:
         cmd.append("--skip-existing")
     if single_doc:
@@ -222,9 +225,10 @@ def run_step_2(paths, workers, skip_existing, single_doc=False,
     cmd = [
         sys.executable, "scripts/character_extraction.py",
         str(paths["imgs"]),
-        str(paths["charnet"]),
+        str(paths["ocr_dir"]),
         "--workers", str(workers),
         "--segmentation", segmentation,
+        "--report-dir", str(paths["reports_dir"]),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
@@ -239,8 +243,9 @@ def run_step_3(paths, workers, skip_existing, single_doc=False):
     """Run italic detection."""
     cmd = [
         sys.executable, "scripts/italic_detection.py",
-        str(paths["charnet"]),
+        str(paths["ocr_dir"]),
         "--workers", str(workers),
+        "--report-dir", str(paths["reports_dir"]),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
@@ -255,8 +260,9 @@ def run_step_4(paths, workers, skip_existing, single_doc=False):
     """Run clustering."""
     cmd = [
         sys.executable, "scripts/clustering.py",
-        str(paths["charnet"]),
+        str(paths["ocr_dir"]),
         "--workers", str(workers),
+        "--report-dir", str(paths["reports_dir"]),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
@@ -272,6 +278,8 @@ def run_step_5(paths, workers, skip_existing):
     cmd = [
         sys.executable, "scripts/typographic_distances.py",
         str(paths["corpus"]),
+        "--ocr-dir", str(paths["ocr_dir"]),
+        "--report-dir", str(paths["reports_dir"]),
     ]
     if skip_existing:
         cmd.append("--skip-existing")
@@ -297,6 +305,7 @@ def run_step_6(paths, workers, skip_existing, acontrario_config=None):
         str(paths["corpus"]),
         "--config", acontrario_config,
         "--no-display",
+        "--report-dir", str(paths["reports_dir"]),
     ]
     if skip_existing:
         cmd.append("--load-results")
@@ -319,36 +328,43 @@ STEP_RUNNERS = {
 # Path resolution
 # ---------------------------------------------------------------------------
 
-def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
+def resolve_corpus_paths(input_path: Path, single_doc: bool = False,
+                         detector: str = "charnet",
+                         ocr_dir_override: str | None = None):
     """
     Resolve the standard corpus directory structure.
 
     For a corpus like data/corpus-1/:
-        imgs/      -> document images
-        charnet/   -> CharNet outputs + extraction outputs
+        imgs/             -> document images
+        ocr/{detector}/   -> OCR + extraction outputs
 
     For single document mode, input_path points directly to a document folder.
+
+    Backward compatibility: if ``ocr/{detector}/`` does not exist but the
+    legacy ``charnet/`` folder does, we fall back to ``charnet/``.
     """
     input_path = Path(input_path).resolve()
 
     if single_doc:
-        # input_path is the document folder itself (e.g., data/corpus-1/imgs/doc001)
-        # Infer corpus root from imgs parent
         if input_path.parent.name == "imgs":
             corpus_root = input_path.parent.parent
         else:
             corpus_root = input_path.parent
 
+        if ocr_dir_override:
+            ocr_root = Path(ocr_dir_override).resolve() / input_path.name
+        else:
+            ocr_root = _resolve_ocr_root(corpus_root, detector) / input_path.name
+
         return {
-            "root": corpus_root.parent.parent,  # workspace root for subprocess cwd
+            "root": corpus_root.parent.parent,
             "corpus": corpus_root,
             "imgs": input_path,
-            "charnet": corpus_root / "charnet" / input_path.name,
+            "ocr_dir": ocr_root,
             "single_doc": True,
         }
 
     # Standard corpus mode
-    # Check if input_path is the corpus root or imgs subfolder
     if (input_path / "imgs").is_dir():
         corpus_root = input_path
         imgs_root = input_path / "imgs"
@@ -356,23 +372,41 @@ def resolve_corpus_paths(input_path: Path, single_doc: bool = False):
         corpus_root = input_path.parent
         imgs_root = input_path
     else:
-        # imgs/ doesn't exist yet — this is expected when Step 0 will
-        # create it, but we still point to the proper location.
         corpus_root = input_path
         imgs_root = input_path / "imgs"
         print(f"  Note: {imgs_root} does not exist yet "
               f"(will be created by Step 0 if --pdf-dir is given)")
 
-    # CharNet output goes to charnet/ sibling of imgs/
-    charnet_root = corpus_root / "charnet"
+    if ocr_dir_override:
+        ocr_root = Path(ocr_dir_override).resolve()
+    else:
+        ocr_root = _resolve_ocr_root(corpus_root, detector)
 
     return {
         "root": corpus_root.parent.parent,
         "corpus": corpus_root,
         "imgs": imgs_root,
-        "charnet": charnet_root,
+        "ocr_dir": ocr_root,
         "single_doc": False,
     }
+
+
+def _resolve_ocr_root(corpus_root: Path, detector: str) -> Path:
+    """Return the OCR output directory.
+
+    Prefers ``ocr/{detector}/``; falls back to the legacy ``charnet/``
+    directory when it already exists and the new layout has not been
+    created yet.
+    """
+    new_path = corpus_root / "ocr" / detector
+    if new_path.is_dir():
+        return new_path
+    legacy = corpus_root / "charnet"
+    if legacy.is_dir() and not (corpus_root / "ocr").is_dir():
+        print(f"  Note: using legacy charnet/ folder (migrate with "
+              f"'mv charnet ocr/{detector}')")
+        return legacy
+    return new_path
 
 
 def validate_paths(paths):
@@ -398,7 +432,7 @@ def print_status(paths, steps_to_run):
     print("=" * 60)
     print(f"\nCorpus:  {paths['corpus']}")
     print(f"Images:  {paths['imgs']}")
-    print(f"Output:  {paths['charnet']}")
+    print(f"Output:  {paths['ocr_dir']}")
 
     if paths["single_doc"]:
         print(f"Mode:    Single document")
@@ -409,7 +443,7 @@ def print_status(paths, steps_to_run):
     print("\nSteps:")
     for step_num, step_info in STEPS.items():
         status = "[ ]"
-        if paths["charnet"].exists():
+        if paths["ocr_dir"].exists():
             try:
                 if step_info["output_check"](paths):
                     status = "[✓]"
@@ -498,6 +532,16 @@ def main(argv=None):
         "--csv",
         help="Metadata CSV to copy into corpus (used with --pdf-dir)",
     )
+    parser.add_argument(
+        "--ocr-dir",
+        help="Override the OCR output directory (default: ocr/{detector}/)."
+             " Useful for pointing at a legacy charnet/ folder.",
+    )
+    parser.add_argument(
+        "--run-tag",
+        help="Tag for reports directory (default: {detector}_{segmentation}_{YYYYMMDD})."
+             " Reports are saved under reports/{run-tag}/.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -546,7 +590,7 @@ def main(argv=None):
             parser.error(f"PDF directory not found: {pdf_dir}")
 
         # Create corpus scaffold
-        for sub in ("imgs", "charnet", "results", "dpis", "reports"):
+        for sub in ("imgs", "results", "dpis", "reports"):
             (corpus_dir / sub).mkdir(parents=True, exist_ok=True)
 
         # Copy metadata CSV if provided
@@ -560,9 +604,26 @@ def main(argv=None):
                 print(f"Copied metadata CSV → {csv_dst}")
 
     # Resolve paths
-    paths = resolve_corpus_paths(args.input_dir, args.single_doc)
+    paths = resolve_corpus_paths(args.input_dir, args.single_doc,
+                                 detector=detector,
+                                 ocr_dir_override=args.ocr_dir)
     if args.pdf_dir:
         paths["pdf_dir"] = str(pdf_dir)
+
+    # Ensure OCR output directory is created
+    paths["ocr_dir"].mkdir(parents=True, exist_ok=True)
+
+    # Compute run tag for reports
+    if args.run_tag:
+        run_tag = args.run_tag
+    else:
+        from datetime import datetime
+        date_str = datetime.now().strftime("%Y%m%d")
+        run_tag = f"{detector}_{segmentation}_{date_str}"
+    reports_dir = paths["corpus"] / "reports" / run_tag
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    paths["reports_dir"] = reports_dir
+    paths["run_tag"] = run_tag
 
     # Validate (skip if step 0 will create the imgs directory)
     if 0 not in steps_to_run:
@@ -629,7 +690,7 @@ def main(argv=None):
     total_elapsed = time.time() - total_start
 
     # Assemble combined pipeline report from individual step reports
-    reports_dir = paths["corpus"] / "reports"
+    reports_dir = paths["reports_dir"]
     if reports_dir.is_dir():
         step_reports = {}
         for rfile in sorted(reports_dir.glob("*_report.json")):
@@ -643,9 +704,11 @@ def main(argv=None):
 
         pipeline_report = {
             "pipeline": {
+                "run_tag": run_tag,
                 "steps_requested": sorted(steps_to_run),
                 "detector": detector,
                 "segmentation": segmentation,
+                "ocr_dir": str(paths["ocr_dir"]),
                 "workers": workers,
                 "total_elapsed_s": round(total_elapsed, 2),
                 "config_file": args.pipeline_config,

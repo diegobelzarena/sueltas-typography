@@ -558,7 +558,7 @@ def process_corpus(
     report_data["output_plots"] = generated_plots
     report.set_summary(report_data)
 
-    report_dir = corpus_dir / "reports"
+    report_dir = Path(args.report_dir) if args.report_dir else corpus_dir / "reports"
     rpath = report.save(report_dir)
     print(f"Report saved: {rpath}")
     return 0
@@ -603,6 +603,10 @@ Examples:
         "--no-display",
         action="store_true",
         help="Use non‑interactive Matplotlib backend (for headless servers)",
+    )
+    parser.add_argument(
+        "--report-dir",
+        help="Directory for the step report JSON (default: {corpus}/reports)",
     )
 
     args = parser.parse_args(argv)

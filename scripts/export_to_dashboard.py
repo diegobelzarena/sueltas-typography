@@ -245,6 +245,7 @@ def export(
     config: dict,
     out_dir: Path,
     skip_images: bool = False,
+    ocr_dir_override: Path | None = None,
 ) -> int:
     """Run the full export pipeline."""
 
@@ -322,9 +323,18 @@ def export(
 
     # ---- Glyph images ----
     if not skip_images:
-        charnet_dir = corpus_dir / "charnet"
+        if ocr_dir_override:
+            charnet_dir = ocr_dir_override
+        else:
+            # Prefer ocr/ layout, fall back to legacy charnet/
+            ocr_root = corpus_dir / "ocr"
+            if ocr_root.is_dir():
+                engines = [d for d in sorted(ocr_root.iterdir()) if d.is_dir()]
+                charnet_dir = engines[0] if len(engines) == 1 else corpus_dir / "charnet"
+            else:
+                charnet_dir = corpus_dir / "charnet"
         if not charnet_dir.exists():
-            print(f"\n  Warning: No charnet/ directory in {corpus_dir}, "
+            print(f"\n  Warning: No OCR output directory found at {charnet_dir}, "
                   "skipping image export")
         else:
             out_images_dir = out_dir / "images"
@@ -386,6 +396,13 @@ def main(argv=None):
         action="store_true",
         help="Skip glyph image export (matrices only)",
     )
+    parser.add_argument(
+        "--ocr-dir",
+        type=Path,
+        default=None,
+        help="Path to OCR output directory with clustering results "
+             "(default: auto-detect from ocr/ or charnet/)",
+    )
     args = parser.parse_args(argv)
 
     corpus_dir = args.corpus_dir.resolve()
@@ -396,7 +413,9 @@ def main(argv=None):
     out_dir = args.out.resolve() if args.out else corpus_dir / "dashboard_export"
     config = _load_config(args.config)
 
-    return export(corpus_dir, config, out_dir, skip_images=args.skip_images)
+    ocr_dir = args.ocr_dir.resolve() if args.ocr_dir else None
+    return export(corpus_dir, config, out_dir,
+                  skip_images=args.skip_images, ocr_dir_override=ocr_dir)
 
 
 if __name__ == "__main__":

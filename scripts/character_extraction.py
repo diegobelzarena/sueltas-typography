@@ -251,19 +251,26 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             char_tblrs_page = np.array([c["tblr"] for c in chars])  # (n, 4)
 
             # Crop the word region (padding = height/5, expanded for chars)
-            # Use the bg-flattened image for char_segment
-            crop, crop_t, crop_l = _crop_word(
+            # Grayscale crop for path finding, flattened crop for mask filtering
+            crop_flat, crop_t, crop_l = _crop_word(
                 img_flat, wt, wb, wl, wr, char_tblrs_page)
+            crop_gray = img[crop_t:crop_t + crop_flat.shape[0],
+                            crop_l:crop_l + crop_flat.shape[1]].copy()
 
-            if crop.size == 0 or crop.shape[0] < 3 or crop.shape[1] < 3:
+            if crop_flat.size == 0 or crop_flat.shape[0] < 3 or crop_flat.shape[1] < 3:
                 word_char_tblrs.append(np.array([]))
                 word_mask_indices.append(np.array([], dtype=np.int64))
                 continue
 
-            # Normalize crop to [0, 1] for char_segment
-            crop_min = crop.min() if crop.size > 0 else 0
-            crop_max = crop.max() if crop.size > 0 else 1
-            crop = (crop - crop_min) / (crop_max - crop_min + 1e-8)
+            # Normalize crops to [0, 1] for char_segment
+            # Grayscale crop: used for path finding (full contrast info)
+            gray_min = crop_gray.min() if crop_gray.size > 0 else 0
+            gray_max = crop_gray.max() if crop_gray.size > 0 else 1
+            crop_gray_norm = (crop_gray - gray_min) / (gray_max - gray_min + 1e-8)
+            # Flattened crop: used for mask filtering (clean background)
+            flat_min = crop_flat.min() if crop_flat.size > 0 else 0
+            flat_max = crop_flat.max() if crop_flat.size > 0 else 1
+            crop_flat_norm = (crop_flat - flat_min) / (flat_max - flat_min + 1e-8)
 
             # Convert char tblrs to crop-local coordinates
             local_tblrs = char_tblrs_page.copy()
@@ -273,7 +280,7 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             local_tblrs[:, 3] -= crop_l  # r
 
             # Clamp to crop bounds
-            ch, cw = crop.shape
+            ch, cw = crop_gray_norm.shape
             local_tblrs[:, 0] = np.clip(local_tblrs[:, 0], 0, ch - 1)
             local_tblrs[:, 1] = np.clip(local_tblrs[:, 1], 1, ch)
             local_tblrs[:, 2] = np.clip(local_tblrs[:, 2], 0, cw - 1)
@@ -293,18 +300,19 @@ def process_page(img_path: str, json_path: str, out_stem: str,
             refwidth = float(np.mean(widths)) if len(widths) > 0 else 1.0
             box_clu = np.ones(len(local_tblrs), dtype=int)
 
-            # Run character segmentation on bg-flattened crop
+            # Run character segmentation
             try:
                 if segmentation == "box_init":
                     char_data, idxs_input = segment_characters(
-                        crop, local_tblrs.copy(), box_clu, refwidth,
+                        crop_flat_norm, local_tblrs.copy(), box_clu, refwidth,
                         mode="box_init")
                 else:
-                    # logit_init returns char_data only (no idxs_input)
+                    # logit_init: grayscale for paths, flattened for masks
                     char_data = segment_characters(
-                        crop, local_tblrs.copy(), box_clu, refwidth,
+                        crop_gray_norm, local_tblrs.copy(), box_clu, refwidth,
                         mode="logit_init",
-                        top_pad=1, bottom_pad=1, widths=widths)
+                        top_pad=1, bottom_pad=1, widths=widths,
+                        img_flat=crop_flat_norm)
                     # Build identity index mapping
                     idxs_input = list(range(len(char_data)))
             except Exception:
@@ -442,6 +450,9 @@ Examples:
                         choices=["box_init", "logit_init"],
                         help="Segmentation mode: box_init (CharNet) or "
                              "logit_init (DocTR) (default: box_init)")
+    parser.add_argument("--report-dir",
+                        help="Directory for the step report JSON "
+                             "(default: {json_root}/../reports)")
     args = parser.parse_args(argv)
 
     image_root = Path(args.image_root)
@@ -526,7 +537,7 @@ Examples:
         "total_characters_extracted": total_chars,
     })
 
-    report_dir = json_root.parent / "reports"
+    report_dir = Path(args.report_dir) if args.report_dir else json_root.parent / "reports"
     rpath = report.save(report_dir)
     print(f"Report saved: {rpath}")
 

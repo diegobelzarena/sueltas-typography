@@ -5,6 +5,10 @@
 #
 # Only detector and segmentation need to be specified here;
 # all other arguments (workers, skip-existing, etc.) are passed via CLI.
+#
+# OCR outputs are stored under  ocr/{detector}/  (e.g. ocr/doctr/).
+# Reports are tagged per run:   reports/{detector}_{segmentation}_{YYYYMMDD}/
+# Override either with --ocr-dir or --run-tag.
 
 detector: doctr            # "charnet" or "doctr"
 segmentation: logit_init   # "box_init" or "logit_init"

@@ -45,7 +45,7 @@ if _SRC not in sys.path:
 
 from doctr_src.predictor import CustomOCRPredictor
 from doctr_src.recognition import create_custom_recognition_predictor
-from doctr_src.utils import get_word_logits
+from doctr_src.utils import get_word_logits, rcnn_positions
 from shared.tools.report import StepReport
 
 
@@ -86,8 +86,13 @@ def _get_vocab(predictor: CustomOCRPredictor) -> str:
 # ---------------------------------------------------------------------------
 
 def _ctc_decode_chars(logits_word: np.ndarray, word_tblr: list[int],
-                      vocab: str) -> list[dict]:
+                      vocab: str, resize_word: np.ndarray,
+                      pad_word: np.ndarray, pad_w: int) -> list[dict]:
     """Decode CRNN logits into per-character tblrs and label dicts.
+
+    Uses :func:`rcnn_positions` to properly account for CRNN preprocessing
+    (resize scales and padding) when mapping CTC sequence positions to
+    pixel coordinates.
 
     Parameters
     ----------
@@ -98,6 +103,12 @@ def _ctc_decode_chars(logits_word: np.ndarray, word_tblr: list[int],
     vocab : str
         Character vocabulary (index i → vocab[i]).  The CTC blank class
         sits at index ``len(vocab)``.
+    resize_word : array-like, shape (2,)
+        ``(scale_h, scale_w)`` applied during CRNN preprocessing.
+    pad_word : array-like, shape (2,)
+        ``(pad_left, pad_right)`` applied during CRNN preprocessing.
+    pad_w : int
+        Padding added around the word crop (``word_height // 5``).
 
     Returns
     -------
@@ -105,8 +116,8 @@ def _ctc_decode_chars(logits_word: np.ndarray, word_tblr: list[int],
     """
     blank_idx = len(vocab)
     wt, wb, wl, wr = word_tblr
+    word_h = wb - wt
     word_w = wr - wl
-    seq_len = logits_word.shape[0]
     max_idx = np.argmax(logits_word, axis=1)
 
     # Collect (seq_position, class_index) for each decoded character
@@ -120,16 +131,32 @@ def _ctc_decode_chars(logits_word: np.ndarray, word_tblr: list[int],
     if not char_positions:
         return []
 
+    # Use rcnn_positions for proper coordinate mapping
+    delta_x1 = -pad_w
+    delta_x2 = pad_w
+    delta_y1 = -pad_w
+    delta_y2 = pad_w
+    word_img_shape = (word_h + 2 * pad_w, word_w + 2 * pad_w)
+
+    pos_ctc = rcnn_positions(
+        logits_word, word_img_shape, resize_word, pad_word,
+        delta_y1, delta_y2, delta_x1, delta_x2,
+    )
+
+    # Convert padded-crop x-positions to page coordinates
+    crop_origin_x = wl - pad_w
+    n_chars = len(pos_ctc) - 1
+
     chars: list[dict] = []
-    for ci, (seq_pos, cls) in enumerate(char_positions):
-        # Horizontal extent mapped linearly to word bbox
-        char_l = wl + int(seq_pos * word_w / seq_len)
-        if ci + 1 < len(char_positions):
-            char_r = wl + int(char_positions[ci + 1][0] * word_w / seq_len) - 1
-        else:
-            char_r = wr
+    for ci in range(n_chars):
+        char_l = pos_ctc[ci] + crop_origin_x
+        char_r = pos_ctc[ci + 1] - 1 + crop_origin_x
 
         # Softmax over character classes (exclude CTC blank)
+        if ci < len(char_positions):
+            seq_pos = char_positions[ci][0]
+        else:
+            seq_pos = 0
         logit_slice = logits_word[seq_pos, :blank_idx].astype(np.float64)
         logit_slice -= logit_slice.max()
         exp_l = np.exp(logit_slice)
@@ -143,7 +170,7 @@ def _ctc_decode_chars(logits_word: np.ndarray, word_tblr: list[int],
                 labels[vocab[idx].lower()] = float(probs[idx])
 
         chars.append({
-            "tblr": [wt, wb, max(char_l, wl), min(char_r, wr)],
+            "tblr": [wt, wb, max(int(char_l), wl), min(int(char_r), wr)],
             "labels": labels,
         })
     return chars
@@ -209,10 +236,11 @@ def process_page(predictor: CustomOCRPredictor,
         chars: list[dict] = []
         try:
             word_height = b - t
-            logits_word, _resize, _pad, _pad_w = get_word_logits(
+            logits_word, resize_word, pad_word, pad_w = get_word_logits(
                 word_height, logits, o_idxs, r_scls, pads, b_idxs, idx,
             )
-            chars = _ctc_decode_chars(logits_word, word_tblr, vocab)
+            chars = _ctc_decode_chars(logits_word, word_tblr, vocab,
+                                      resize_word, pad_word, pad_w)
         except Exception:
             pass  # fall back to empty chars
 
@@ -273,6 +301,9 @@ Examples:
                         help="Skip pages that already have JSON output")
     parser.add_argument("--single-doc", action="store_true",
                         help="Treat input_root as a single document folder")
+    parser.add_argument("--report-dir",
+                        help="Directory for the step report JSON "
+                             "(default: {output_root}/../reports)")
     args = parser.parse_args(argv)
 
     # ---- Build model -------------------------------------------------------
@@ -362,7 +393,7 @@ Examples:
     })
 
     # Save report next to the output JSONs
-    report_dir = output_root.parent / "reports"
+    report_dir = Path(args.report_dir) if args.report_dir else output_root.parent / "reports"
     rpath = report.save(report_dir)
     print(f"Report saved: {rpath}")
     return 0

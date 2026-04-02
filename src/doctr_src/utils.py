@@ -122,6 +122,7 @@ def char_segment_word(
     delta_y2: int,
     delta_x1: int,
     delta_x2: int,
+    word_img_flat: np.ndarray | None = None,
 ) -> list[tuple[tuple[int, int, int, int], np.ndarray]]:
     """Segment a single word image into character masks using CRNN logits.
 
@@ -129,6 +130,11 @@ def char_segment_word(
     2. Builds initial character boxes from those positions.
     3. Applies contrast normalisation to the word crop.
     4. Runs :func:`char_segment_logit_init` for min-cost-path refinement.
+
+    Args:
+        word_img: Grayscale word crop (used for path finding).
+        word_img_flat: Optional bg-flattened word crop (used for mask
+            filtering).  If *None*, *word_img* is used for both.
 
     Returns:
         List of ``((t, b, l, r), mask)`` tuples, one per detected character.
@@ -174,7 +180,21 @@ def char_segment_word(
     pre_img -= pre_img.min()
     pre_img /= pre_img.max()
 
+    # If a flattened image is provided, normalize it the same way
+    pre_img_flat = None
+    if word_img_flat is not None:
+        blur_flat = cv2.GaussianBlur(
+            word_img_flat, (kh, kw),
+            sigmaX=word_img.shape[0] // 2,
+            sigmaY=word_img.shape[1] // 2,
+        )
+        cont_flat = word_img_flat / (blur_flat + 1e-6)
+        pre_img_flat = cont_flat.copy()
+        pre_img_flat -= pre_img_flat.min()
+        pre_img_flat /= pre_img_flat.max()
+
     return char_segment_logit_init(
         pre_img, tblrs.copy(), box_clu, refwidth,
         top_pad, bottom_pad, widths,
+        img_flat=pre_img_flat,
     )

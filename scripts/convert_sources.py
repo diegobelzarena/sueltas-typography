@@ -489,6 +489,10 @@ Examples:
         action="store_true",
         help="Skip sources whose output folder already contains PNGs",
     )
+    parser.add_argument(
+        "--report-dir",
+        help="Directory for the step report JSON (default: {img_dir}/../reports)",
+    )
     args = parser.parse_args(argv)
 
     source_dir = Path(args.source_dir).resolve()
@@ -590,7 +594,7 @@ Examples:
     })
 
     # Save report next to the output images
-    report_dir = img_dir.parent / "reports"
+    report_dir = Path(args.report_dir) if args.report_dir else img_dir.parent / "reports"
     report_path = report.save(report_dir)
     print(f"Report saved: {report_path}")
 
