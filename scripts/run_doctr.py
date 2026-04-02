@@ -65,7 +65,7 @@ def build_predictor(device: str = "cuda",
         arch="crnn_vgg16_bn", pretrained=True,
         batch_size=32,
         dynamic_width_batching=True,
-        split_wide_crops=True,
+        split_wide_crops=False,
     )
     predictor = CustomOCRPredictor(
         det_predictor=det_pred,
