@@ -63,6 +63,7 @@ def build_predictor(device: str = "cuda",
     )
     reco_pred = create_custom_recognition_predictor(
         arch="crnn_vgg16_bn", pretrained=True,
+        batch_size=32,
         dynamic_width_batching=True,
     )
     predictor = CustomOCRPredictor(
@@ -167,7 +168,7 @@ def _ctc_decode_chars(logits_word: np.ndarray, word_tblr: list[int],
         labels = {}
         for idx in top10:
             if idx < len(vocab):
-                labels[vocab[idx].lower()] = float(probs[idx])
+                labels[vocab[idx]] = float(probs[idx])
 
         chars.append({
             "tblr": [wt, wb, max(int(char_l), wl), min(int(char_r), wr)],
