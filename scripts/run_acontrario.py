@@ -218,6 +218,7 @@ def process_corpus(
     *,
     load_results: bool = False,
     plots: list[str] | None = None,
+    report_dir: str | None = None,
 ) -> int:
     """Run the full a contrario analysis on a corpus directory.
 
@@ -558,7 +559,7 @@ def process_corpus(
     report_data["output_plots"] = generated_plots
     report.set_summary(report_data)
 
-    report_dir = Path(args.report_dir) if args.report_dir else corpus_dir / "reports"
+    report_dir = Path(report_dir) if report_dir else corpus_dir / "reports"
     rpath = report.save(report_dir)
     print(f"Report saved: {rpath}")
     return 0
@@ -624,6 +625,7 @@ Examples:
 
     return process_corpus(
         corpus_dir, config, load_results=args.load_results, plots=plots,
+        report_dir=args.report_dir,
     )
 
 
