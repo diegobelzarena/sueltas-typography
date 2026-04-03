@@ -37,8 +37,9 @@ if _SRC not in sys.path:
 
 from image_processing.pdf_utils import (
     clamp_dpi,
+    estimate_effective_dpi,
     get_tiff_dpi,
-    select_best_image,
+    select_best_scan_image,
 )
 
 
@@ -92,10 +93,10 @@ def get_tiff_info(file_path: Path) -> dict:
 def get_pdf_info(pdf_path: Path) -> list[dict]:
     """Extract page dimensions and effective DPI from a PDF.
 
-    Uses :func:`select_best_image` to pick the scan image (filtering out
-    masks and thumbnails), then estimates DPI from the ratio of image
-    pixels to the PDF page size (in points → inches).  Results are
-    sanity-clamped to [72, 1200].
+    Uses :func:`select_best_scan_image` to pick the scan image (filtering out
+    masks and thumbnails via bbox coverage), then estimates DPI via
+    :func:`estimate_effective_dpi` (pixels ÷ placement-bbox ÷ 72).
+    Results are sanity-clamped to [72, 1200].
     """
     pages_data = []
     with pymupdf.open(str(pdf_path)) as doc:
@@ -103,18 +104,11 @@ def get_pdf_info(pdf_path: Path) -> list[dict]:
             w_in = page.rect.width / 72
             h_in = page.rect.height / 72
 
-            best_xref, w_px, h_px, _masks = select_best_image(page, doc)
-            if best_xref == 0:
+            result = select_best_scan_image(page, doc)
+            if result is None:
                 continue
 
-            dpi_w = w_px / w_in if w_in else None
-            dpi_h = h_px / h_in if h_in else None
-
-            label = f"{pdf_path.stem} page {i}"
-            if dpi_w is not None:
-                dpi_w = clamp_dpi(dpi_w, label)
-            if dpi_h is not None:
-                dpi_h = clamp_dpi(dpi_h, label)
+            dpi_w, dpi_h = estimate_effective_dpi(result, page)
 
             pages_data.append({
                 "page": f"page_{i}.png",

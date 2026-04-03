@@ -50,10 +50,12 @@ if _SRC not in sys.path:
 from shared.tools.report import StepReport
 from image_processing.pdf_utils import (
     clamp_dpi,
+    estimate_effective_dpi,
     get_tiff_dpi,
     median_dpi,
     round_dpi,
-    select_best_image,
+    select_best_scan_image,
+    _pixmap_to_pil,
 )
 
 
@@ -156,17 +158,17 @@ def _get_dpi_from_csv(name: str, dpi_csv_dir: Path) -> float | None:
 
 
 def _get_dpi_from_pdf(doc: pymupdf.Document) -> float:
-    """Estimate DPI from embedded image metadata in the PDF."""
+    """Estimate DPI from bbox-based calculation across all pages of a PDF."""
     dpi_values: list[float] = []
     for page in doc:
-        best_xref, _, _, _ = select_best_image(page, doc)
-        if best_xref == 0:
+        result = select_best_scan_image(page, doc)
+        if result is None:
             continue
-        pix = pymupdf.Pixmap(doc, best_xref)
-        if pix.xres:
-            dpi_values.append(clamp_dpi(pix.xres))
-        elif pix.yres:
-            dpi_values.append(clamp_dpi(pix.yres))
+        dpi_x, dpi_y = estimate_effective_dpi(result, page)
+        if dpi_x is not None:
+            dpi_values.append(dpi_x)
+        if dpi_y is not None:
+            dpi_values.append(dpi_y)
 
     return median_dpi(dpi_values, step=25)
 
@@ -194,17 +196,6 @@ def _get_dpi_from_tiffs(tiff_files: list[Path]) -> float:
 # ---------------------------------------------------------------------------
 # Core extraction: PDF
 # ---------------------------------------------------------------------------
-
-def _pixmap_to_pil(pix: pymupdf.Pixmap) -> Image.Image:
-    """Convert a PyMuPDF Pixmap to a Pillow Image."""
-    # CMYK pixmaps: convert to RGB first to avoid misinterpreting channels
-    if pix.colorspace and pix.colorspace.n == 4 and not pix.alpha:
-        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-    mode = "RGB" if pix.n >= 3 else "L"
-    if pix.alpha:
-        mode += "A"
-    return Image.frombytes(mode, (pix.width, pix.height), pix.samples)
-
 
 def extract_pdf(
     pdf_path: Path,
@@ -255,14 +246,19 @@ def extract_pdf(
             page_details.append({"page": idx, "n_layers": 0, "status": "skip_no_images"})
             continue
 
-        best_xref, _best_w, _best_h, mask_xrefs = select_best_image(page, doc)
-        if best_xref == 0:
+        best = select_best_scan_image(page, doc)
+        if best is None:
             page_details.append({"page": idx, "n_layers": n_layers, "status": "skip_no_valid_image"})
             continue
 
+        best_xref = best["xref"]
+        n_masks = n_layers - len({
+            e[0] for e in images if e[1] != 0
+        })  # approximate non-mask count
+
         if n_layers != 1:
             msg = (f"{pdf_stem} page {idx} has {n_layers} images "
-                   f"({len(mask_xrefs)} mask(s)), selected xref {best_xref}")
+                   f"(coverage={best['coverage']:.2f}), selected xref {best_xref}")
             warnings.append(msg)
             print(f"  Info: {msg}")
 
@@ -281,7 +277,9 @@ def extract_pdf(
 
         page_details.append({
             "page": idx, "n_layers": n_layers,
-            "width_px": pw, "height_px": ph, "status": "ok",
+            "width_px": pw, "height_px": ph,
+            "coverage": round(best["coverage"], 4),
+            "status": "ok",
         })
         count += 1
 
