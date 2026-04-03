@@ -50,6 +50,7 @@ _SRC = str(Path(__file__).resolve().parent.parent / "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+from shared.tools.metadata import load_skip_pages
 from shared.tools.report import StepReport
 
 
@@ -192,6 +193,9 @@ Examples:
                         help="Skip images that already have JSON output")
     parser.add_argument("--single-doc", action="store_true",
                         help="Process a single folder of PNGs as one document")
+    parser.add_argument("--metadata-csv",
+                        help="Corpus CSV with a SkipPages column to exclude "
+                             "specific pages from processing")
     parser.add_argument("--report-dir",
                         help="Directory for the step report JSON "
                              "(default: {output_root}/../reports)")
@@ -234,14 +238,23 @@ Examples:
     # ---- collect all images up-front ---------------------------------------
     image_tasks = []  # list of (im_file, image_id, out_dir)
     skipped = 0
+    skipped_csv = 0
+
+    skip_pages = load_skip_pages(args.metadata_csv) if args.metadata_csv else {}
+
     if args.single_doc:
         # Treat input_root as a single document folder
         doc_path = args.input_root
         out_path = args.output_root
+        doc_name = os.path.basename(doc_path)
+        doc_skip = skip_pages.get(doc_name, set())
         for im_name in sorted(os.listdir(doc_path)):
             if not im_name.lower().endswith(".png"):
                 continue
             image_id = os.path.splitext(im_name)[0]
+            if image_id in doc_skip:
+                skipped_csv += 1
+                continue
             # Check if output already exists
             if args.skip_existing:
                 json_path = os.path.join(out_path, f"{image_id}.json")
@@ -258,11 +271,15 @@ Examples:
             doc_path = os.path.join(args.input_root, doc)
             if not os.path.isdir(doc_path):
                 continue
+            doc_skip = skip_pages.get(doc, set())
             out_path = os.path.join(args.output_root, doc)
             for im_name in sorted(os.listdir(doc_path)):
                 if not im_name.lower().endswith(".png"):
                     continue
                 image_id = os.path.splitext(im_name)[0]
+                if image_id in doc_skip:
+                    skipped_csv += 1
+                    continue
                 # Check if output already exists
                 if args.skip_existing:
                     json_path = os.path.join(out_path, f"{image_id}.json")
@@ -275,6 +292,8 @@ Examples:
                     out_path,
                 ))
 
+    if skipped_csv > 0:
+        print(f"Skipped {skipped_csv} images via metadata CSV.")
     if skipped > 0:
         print(f"Skipped {skipped} images with existing outputs.")
 

@@ -49,6 +49,7 @@ from image_processing.orientation import (
 )
 from image_processing.char_segment import char_segment, segment_characters
 from image_processing.preprocessing import bg_flatten, embed_noresize
+from shared.tools.metadata import load_skip_pages
 from shared.tools.report import StepReport
 
 
@@ -450,6 +451,9 @@ Examples:
                         choices=["box_init", "logit_init"],
                         help="Segmentation mode: box_init (CharNet) or "
                              "logit_init (DocTR) (default: box_init)")
+    parser.add_argument("--metadata-csv",
+                        help="Corpus CSV with a SkipPages column to exclude "
+                             "specific pages from processing")
     parser.add_argument("--report-dir",
                         help="Directory for the step report JSON "
                              "(default: {json_root}/../reports)")
@@ -463,9 +467,17 @@ Examples:
 
     # -- Collect page tasks --------------------------------------------------
     tasks = []  # (img_path, json_path, out_stem)
+    skipped_csv = 0
+
+    skip_pages = load_skip_pages(args.metadata_csv) if args.metadata_csv else {}
+
     if args.single_doc:
         # Treat image_root and json_root as single document folders
+        doc_skip = skip_pages.get(image_root.name, set())
         for img_file in sorted(image_root.glob("*.png")):
+            if img_file.stem in doc_skip:
+                skipped_csv += 1
+                continue
             json_file = json_root / f"{img_file.stem}.json"
             if not json_file.exists():
                 continue
@@ -480,7 +492,11 @@ Examples:
             json_dir = json_root / doc_dir.name
             if not json_dir.is_dir():
                 continue
+            doc_skip = skip_pages.get(doc_dir.name, set())
             for img_file in sorted(doc_dir.glob("*.png")):
+                if img_file.stem in doc_skip:
+                    skipped_csv += 1
+                    continue
                 json_file = json_dir / f"{img_file.stem}.json"
                 if not json_file.exists():
                     continue
@@ -488,6 +504,9 @@ Examples:
                 if args.skip_existing and os.path.exists(f"{out_stem}.npz"):
                     continue
                 tasks.append((str(img_file), str(json_file), out_stem))
+
+    if skipped_csv:
+        print(f"Skipped {skipped_csv} pages via metadata CSV.")
 
     if not tasks:
         print("No pages to process.")

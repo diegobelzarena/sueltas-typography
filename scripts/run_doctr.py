@@ -46,6 +46,7 @@ if _SRC not in sys.path:
 from doctr_src.predictor import CustomOCRPredictor
 from doctr_src.recognition import create_custom_recognition_predictor
 from doctr_src.utils import get_word_logits, rcnn_positions
+from shared.tools.metadata import load_skip_pages
 from shared.tools.report import StepReport
 
 
@@ -303,6 +304,9 @@ Examples:
                         help="Skip pages that already have JSON output")
     parser.add_argument("--single-doc", action="store_true",
                         help="Treat input_root as a single document folder")
+    parser.add_argument("--metadata-csv",
+                        help="Corpus CSV with a SkipPages column to exclude "
+                             "specific pages from processing")
     parser.add_argument("--report-dir",
                         help="Directory for the step report JSON "
                              "(default: {output_root}/../reports)")
@@ -323,9 +327,17 @@ Examples:
     output_root = Path(args.output_root)
     tasks: list[tuple[str, str]] = []   # (img_path, json_output_path)
     skipped = 0
+    skipped_csv = 0
+
+    skip_pages = load_skip_pages(args.metadata_csv) if args.metadata_csv else {}
 
     if args.single_doc:
+        doc_name = input_root.name
+        doc_skip = skip_pages.get(doc_name, set())
         for img_file in sorted(input_root.glob("*.png")):
+            if img_file.stem in doc_skip:
+                skipped_csv += 1
+                continue
             out_path = str(output_root / f"{img_file.stem}.json")
             if args.skip_existing and os.path.exists(out_path):
                 skipped += 1
@@ -335,14 +347,20 @@ Examples:
         for doc_dir in sorted(input_root.iterdir()):
             if not doc_dir.is_dir():
                 continue
+            doc_skip = skip_pages.get(doc_dir.name, set())
             out_dir = output_root / doc_dir.name
             for img_file in sorted(doc_dir.glob("*.png")):
+                if img_file.stem in doc_skip:
+                    skipped_csv += 1
+                    continue
                 out_path = str(out_dir / f"{img_file.stem}.json")
                 if args.skip_existing and os.path.exists(out_path):
                     skipped += 1
                     continue
                 tasks.append((str(img_file), out_path))
 
+    if skipped_csv:
+        print(f"Skipped {skipped_csv} pages via metadata CSV.")
     if skipped:
         print(f"Skipped {skipped} pages with existing outputs.")
 

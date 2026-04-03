@@ -49,6 +49,7 @@ _SRC = str(Path(__file__).resolve().parent.parent / "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+from shared.tools.metadata import find_corpus_csv
 from shared.tools.report import StepReport
 
 
@@ -170,14 +171,17 @@ def run_step_0(paths, workers, skip_existing, source_conv_opts=None,
 
 
 def run_step_1(paths, workers, skip_existing, config_file=None, single_doc=False,
-               detector="charnet", doctr_opts=None):
+               detector="charnet", doctr_opts=None, metadata_csv=None):
     """Run OCR detection + recognition (CharNet or DocTR)."""
     if detector == "doctr":
-        return _run_step_1_doctr(paths, skip_existing, single_doc, doctr_opts or {})
-    return _run_step_1_charnet(paths, workers, skip_existing, config_file, single_doc)
+        return _run_step_1_doctr(paths, skip_existing, single_doc, doctr_opts or {},
+                                metadata_csv=metadata_csv)
+    return _run_step_1_charnet(paths, workers, skip_existing, config_file, single_doc,
+                               metadata_csv=metadata_csv)
 
 
-def _run_step_1_charnet(paths, workers, skip_existing, config_file, single_doc):
+def _run_step_1_charnet(paths, workers, skip_existing, config_file, single_doc,
+                        metadata_csv=None):
     """Run CharNet OCR."""
     if config_file is None:
         config_file = find_charnet_config()
@@ -194,6 +198,8 @@ def _run_step_1_charnet(paths, workers, skip_existing, config_file, single_doc):
     ]
     if skip_existing:
         cmd.append("--skip-existing")
+    if metadata_csv:
+        cmd.extend(["--metadata-csv", str(metadata_csv)])
         
     if single_doc:
         cmd.append("--single-doc")
@@ -201,7 +207,8 @@ def _run_step_1_charnet(paths, workers, skip_existing, config_file, single_doc):
     return _run_cmd(cmd, paths["root"])
 
 
-def _run_step_1_doctr(paths, skip_existing, single_doc, doctr_opts):
+def _run_step_1_doctr(paths, skip_existing, single_doc, doctr_opts,
+                      metadata_csv=None):
     """Run DocTR detection + recognition."""
     cmd = [
         sys.executable, "scripts/run_doctr.py",
@@ -213,6 +220,8 @@ def _run_step_1_doctr(paths, skip_existing, single_doc, doctr_opts):
     cmd.extend(["--report-dir", str(paths["reports_dir"])])
     if skip_existing:
         cmd.append("--skip-existing")
+    if metadata_csv:
+        cmd.extend(["--metadata-csv", str(metadata_csv)])
     if single_doc:
         cmd.append("--single-doc")
 
@@ -220,7 +229,7 @@ def _run_step_1_doctr(paths, skip_existing, single_doc, doctr_opts):
 
 
 def run_step_2(paths, workers, skip_existing, single_doc=False,
-               segmentation="box_init"):
+               segmentation="box_init", metadata_csv=None):
     """Run character extraction."""
     cmd = [
         sys.executable, "scripts/character_extraction.py",
@@ -232,6 +241,8 @@ def run_step_2(paths, workers, skip_existing, single_doc=False,
     ]
     if skip_existing:
         cmd.append("--skip-existing")
+    if metadata_csv:
+        cmd.extend(["--metadata-csv", str(metadata_csv)])
 
     if single_doc:
         cmd.append("--single-doc")
@@ -533,6 +544,11 @@ def main(argv=None):
         help="Metadata CSV to copy into corpus (used with --pdf-dir)",
     )
     parser.add_argument(
+        "--metadata-csv",
+        help="Corpus CSV with a SkipPages column to exclude specific pages. "
+             "Auto-detected from corpus directory if not provided.",
+    )
+    parser.add_argument(
         "--ocr-dir",
         help="Override the OCR output directory (default: ocr/{detector}/)."
              " Useful for pointing at a legacy charnet/ folder.",
@@ -613,6 +629,17 @@ def main(argv=None):
     # Ensure OCR output directory is created
     paths["ocr_dir"].mkdir(parents=True, exist_ok=True)
 
+    # Resolve metadata CSV for page-skip filtering
+    metadata_csv = None
+    if args.metadata_csv:
+        metadata_csv = Path(args.metadata_csv).resolve()
+    elif not args.single_doc:
+        metadata_csv = find_corpus_csv(paths["corpus"])
+    if metadata_csv and metadata_csv.is_file():
+        print(f"  Metadata CSV: {metadata_csv}")
+    else:
+        metadata_csv = None
+
     # Compute run tag for reports
     if args.run_tag:
         run_tag = args.run_tag
@@ -666,11 +693,12 @@ def main(argv=None):
         elif step_num == 1:
             success, error = runner(
                 paths, workers, args.skip_existing, args.charnet_config,
-                args.single_doc, detector=detector, doctr_opts=doctr_opts)
+                args.single_doc, detector=detector, doctr_opts=doctr_opts,
+                metadata_csv=metadata_csv)
         elif step_num == 2:
             success, error = runner(
                 paths, workers, args.skip_existing, args.single_doc,
-                segmentation=segmentation)
+                segmentation=segmentation, metadata_csv=metadata_csv)
         elif step_num == 6:
             success, error = runner(paths, workers, args.skip_existing, args.acontrario_config)
         elif step_num == 5:
