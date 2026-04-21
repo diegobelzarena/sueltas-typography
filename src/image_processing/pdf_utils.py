@@ -182,10 +182,10 @@ def _rank_scan_candidates(
     min_coverage: float = MIN_COVERAGE,
     min_pixel_area: int = MIN_PIXEL_AREA,
 ) -> list[dict]:
-    """Filter and rank image candidate dicts; primary key = coverage, secondary = pixel_area.
+    """Filter and rank image candidate dicts; prefer non-JBIG2, then coverage, then pixel_area.
 
     Each dict in *candidates* must have keys: ``xref``, ``width``,
-    ``height``, ``pixel_area``, ``coverage``.
+    ``height``, ``pixel_area``, ``coverage``, ``is_jbig2``.
 
     Rejection criteria (false-positive filters)
     --------------------------------------------
@@ -196,7 +196,9 @@ def _rank_scan_candidates(
 
     Fallback strategy
     -----------------
-    If no candidate passes *both* thresholds the filter relaxes:
+    If any non-JBIG2 candidates exist, JBIG2 candidates are ignored.
+    Within that preferred pool, if no candidate passes *both* thresholds the
+    filter relaxes:
 
     1. Coverage-only (pixel_area filter dropped).
     2. Unconditional — all candidates are returned sorted by
@@ -208,16 +210,19 @@ def _rank_scan_candidates(
     def sort_key(c: dict) -> tuple[float, int]:
         return (c["coverage"], c["pixel_area"])
 
+    non_jbig2_candidates = [c for c in candidates if not c["is_jbig2"]]
+    candidate_pool = non_jbig2_candidates or candidates
+
     qualified = [
-        c for c in candidates
+        c for c in candidate_pool
         if c["coverage"] >= min_coverage and c["pixel_area"] >= min_pixel_area
     ]
     if not qualified:
         # Relax: drop pixel_area filter
-        qualified = [c for c in candidates if c["coverage"] >= min_coverage]
+        qualified = [c for c in candidate_pool if c["coverage"] >= min_coverage]
     if not qualified:
         # Full fallback
-        qualified = list(candidates)
+        qualified = list(candidate_pool)
 
     return sorted(qualified, key=sort_key, reverse=True)
 
@@ -274,6 +279,7 @@ def select_best_scan_image(
         xref = entry[0]
         w, h = entry[2], entry[3]
         name: str = entry[7] if len(entry) > 7 else str(xref)
+        filter_name = entry[8] if len(entry) > 8 else ""
         if xref in mask_xrefs:
             continue
         coverage, bbox = _image_coverage(page, entry)
@@ -284,6 +290,7 @@ def select_best_scan_image(
             "pixel_area": w * h,
             "coverage": coverage,
             "bbox": bbox,
+            "is_jbig2": str(filter_name).lstrip("/").lower() == "jbig2decode",
             "name": name,
         })
 

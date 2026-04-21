@@ -268,9 +268,27 @@ def extract_pdf(
             img = _pixmap_to_pil(pix)
             new_w = int(img.width * scale)
             new_h = int(img.height * scale)
+            if (abs(new_h-1230)/1230) > 0.16: # check for wildly wrong DPI estimates
+                print(f"  Warning: page {idx} scaled height {new_h} is very different from expected 1230px")
+                # Choose dpi so that new_h is in that range (dpi divisible by 50)
+                orig_dpi = (img.height * target_dpi) / 1230
+                orig_dpi = round_dpi(orig_dpi, step=50)
+                scale = target_dpi / orig_dpi
+                new_w = int(img.width * scale)
+                new_h = int(img.height * scale)
             img = img.resize((new_w, new_h), resample=Image.LANCZOS)
             img.save(str(page_dir / f"page_{idx}.png"), dpi=(target_dpi, target_dpi))
             pw, ph = new_w, new_h
+        elif (abs(pix.height-1230)/1230) > 0.16: # check for wildly wrong DPI estimates even without scaling
+            print(f"  Warning: page {idx} height {pix.height} is very different from expected 1230px")
+            img = _pixmap_to_pil(pix)
+            # Choose dpi so that ph is in that range (dpi divisible by 50)
+            orig_dpi = (pix.height * target_dpi) / 1230
+            orig_dpi = round_dpi(orig_dpi, step=50)
+            scale = target_dpi / orig_dpi
+            pw, ph = int(img.width * scale), int(img.height * scale)
+            img = img.resize((pw, ph), resample=Image.LANCZOS)
+            img.save(str(page_dir / f"page_{idx}.png"), dpi=(target_dpi, target_dpi))
         else:
             pix.save(str(page_dir / f"page_{idx}.png"))
             pw, ph = pix.width, pix.height
