@@ -26,6 +26,7 @@ certainly *is* the scan.
 
 from __future__ import annotations
 
+from io import BytesIO
 import statistics
 from pathlib import Path
 from typing import TypedDict
@@ -380,10 +381,21 @@ def _pixmap_to_pil(pix: pymupdf.Pixmap) -> Image.Image:
     """
     if pix.colorspace and pix.colorspace.n == 4 and not pix.alpha:
         pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-    mode = "RGB" if pix.n >= 3 else "L"
+
+    channel_count = pix.colorspace.n if pix.colorspace else pix.n - (1 if pix.alpha else 0)
     if pix.alpha:
-        mode += "A"
-    return Image.frombytes(mode, (pix.width, pix.height), pix.samples)
+        mode = {1: "LA", 3: "RGBA"}.get(channel_count)
+    else:
+        mode = {1: "L", 3: "RGB"}.get(channel_count)
+
+    if mode is not None:
+        try:
+            return Image.frombytes(mode, (pix.width, pix.height), bytes(pix.samples))
+        except (ValueError, OSError):
+            pass
+
+    with Image.open(BytesIO(pix.tobytes("png"))) as img:
+        return img.copy()
 
 
 def extract_scanned_page_image(
