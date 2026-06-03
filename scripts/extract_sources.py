@@ -40,7 +40,7 @@ _SRC = str(Path(__file__).resolve().parent.parent / "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from image_processing.pdf_utils import _pixmap_to_pil, clamp_dpi, get_tiff_dpi, render_page_to_target_dpi
+from image_processing.pdf_utils import _pixmap_to_pil, clamp_dpi, get_tiff_dpi, render_page_to_target_dpi, round_dpi
 from shared.tools.report import StepReport
 
 
@@ -56,6 +56,10 @@ PDF_BBOX_POS_TOL_PTS = 2.0
 PDF_BBOX_SIZE_REL_TOL = 0.02
 PDF_VERTICAL_SPLIT_MIN_COVERAGE = 0.85
 PDF_BINARY_BLUR_RADIUS = 0.6
+EXPECTED_OUTPUT_HEIGHT_PX = 1230
+OUTPUT_HEIGHT_REL_TOL = 0.16
+DEFAULT_SOURCE_DPI = 72.0
+DEFAULT_SOURCE_DPI_ABS_TOL = 1.0
 
 
 @dataclass(frozen=True)
@@ -219,18 +223,70 @@ def _prepare_image_for_output(image: Image.Image) -> Image.Image:
         gray_image.close()
 
 
+def _is_default_source_dpi(source_dpi: float | None) -> bool:
+    """Return True when the detected DPI looks like the PDF/TIFF fallback 72 DPI."""
+    return source_dpi is not None and abs(source_dpi - DEFAULT_SOURCE_DPI) <= DEFAULT_SOURCE_DPI_ABS_TOL
+
+
+def _maybe_correct_source_dpi(
+    inspection: PageInspection | None,
+    image_height_px: int,
+    source_dpi: float | None,
+    target_dpi: int,
+) -> float | None:
+    """Correct suspicious source DPI estimates using the legacy 1230px heuristic."""
+    if source_dpi is None or source_dpi <= 0 or image_height_px <= 0:
+        return source_dpi
+
+    estimated_output_height = image_height_px * target_dpi / source_dpi
+    output_height_error = abs(estimated_output_height - EXPECTED_OUTPUT_HEIGHT_PX) / EXPECTED_OUTPUT_HEIGHT_PX
+
+    correction_reasons: list[str] = []
+    if _is_default_source_dpi(source_dpi):
+        correction_reasons.append("default_source_dpi_72")
+    if output_height_error > OUTPUT_HEIGHT_REL_TOL:
+        correction_reasons.append("wildly_wrong_output_height")
+
+    if not correction_reasons:
+        return source_dpi
+
+    corrected_dpi = float(round_dpi((image_height_px * target_dpi) / EXPECTED_OUTPUT_HEIGHT_PX, step=50))
+    if abs(corrected_dpi - source_dpi) <= DEFAULT_SOURCE_DPI_ABS_TOL:
+        return source_dpi
+
+    if inspection is not None:
+        if "source_dpi_corrected" not in inspection.warnings:
+            inspection.warnings.append("source_dpi_corrected")
+        inspection.payload["dpi_correction_applied"] = True
+        inspection.payload["dpi_correction_reason"] = "+".join(correction_reasons)
+        inspection.payload["reported_source_dpi"] = round(source_dpi, 2)
+        inspection.payload["corrected_source_dpi"] = corrected_dpi
+        inspection.payload["estimated_output_height_px"] = round(estimated_output_height, 1)
+        inspection.payload["expected_output_height_px"] = EXPECTED_OUTPUT_HEIGHT_PX
+        inspection.source_dpi = corrected_dpi
+
+    return corrected_dpi
+
+
 def normalize_to_target_dpi(
     image: Image.Image,
     source_dpi: float | None,
     target_dpi: int,
+    inspection: PageInspection | None = None,
 ) -> tuple[Image.Image, float, bool]:
     """Resize *image* when a source DPI is available and differs from target."""
     prepared_image = _prepare_image_for_output(image)
+    effective_source_dpi = _maybe_correct_source_dpi(
+        inspection,
+        prepared_image.height,
+        source_dpi,
+        target_dpi,
+    )
 
-    if source_dpi is None or source_dpi <= 0:
+    if effective_source_dpi is None or effective_source_dpi <= 0:
         return prepared_image, 1.0, False
 
-    scale_factor = target_dpi / source_dpi
+    scale_factor = target_dpi / effective_source_dpi
     if abs(scale_factor - 1.0) <= 0.01:
         return prepared_image, 1.0, False
 
@@ -471,6 +527,43 @@ def _is_vertical_split_full_page_group(
         return False
 
     return True
+
+
+def _has_full_page_image_mask_with_other_candidates(
+    candidates: list[dict[str, Any]],
+    page_rect: pymupdf.Rect,
+) -> bool:
+    """Return True when a near-full-page stencil coexists with multiple image pieces.
+
+    These pages tend to be built from many smaller placed images plus one
+    full-page ImageMask stencil. Reconstructing them candidate-by-candidate is
+    fragile, so they should fall back to a full-page screenshot.
+    """
+    if len(candidates) < 2 or page_rect.width <= 0 or page_rect.height <= 0:
+        return False
+
+    image_masks = [
+        candidate for candidate in candidates
+        if candidate.get("is_image_mask") and candidate.get("bbox") is not None
+    ]
+    positioned_content = [
+        candidate for candidate in candidates
+        if not candidate.get("is_image_mask") and candidate.get("bbox") is not None
+    ]
+    if not image_masks or len(positioned_content) < 2:
+        return False
+
+    for candidate in image_masks:
+        bbox = candidate["bbox"]
+        mask_width = abs(bbox[2] - bbox[0])
+        mask_height = abs(bbox[3] - bbox[1])
+        if (
+            mask_width / page_rect.width >= PDF_VERTICAL_SPLIT_MIN_COVERAGE
+            and mask_height / page_rect.height >= PDF_VERTICAL_SPLIT_MIN_COVERAGE
+        ):
+            return True
+
+    return False
 
 
 def _pick_layered_full_page_base_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any]:
@@ -770,6 +863,7 @@ def _collect_pdf_page_candidates(
         bbox = _union_rects(rects)
         rect_width_pts = abs(bbox[2] - bbox[0]) if bbox is not None else None
         rect_height_pts = abs(bbox[3] - bbox[1]) if bbox is not None else None
+        is_image_mask = _pdf_xref_is_image_mask(doc, xref, image_mask_flags)
         dpi_x, dpi_y, source_dpi = _estimate_pdf_candidate_dpi(
             width_px,
             height_px,
@@ -799,8 +893,8 @@ def _collect_pdf_page_candidates(
             "source_dpi": source_dpi,
             "has_mask": smask != 0,
             "is_soft_mask": xref in mask_xrefs,
-            "is_image_mask": _pdf_xref_is_image_mask(doc, xref, image_mask_flags),
-            "consider_in_width_check": xref not in mask_xrefs,
+            "is_image_mask": is_image_mask,
+            "consider_in_width_check": xref not in mask_xrefs and not is_image_mask,
             "same_width_as_largest": False,
         })
 
@@ -891,6 +985,25 @@ def inspect_pdf_source(source: SourceRef) -> list[PageInspection]:
                 ))
                 continue
 
+            if _has_full_page_image_mask_with_other_candidates(candidates, page.rect):
+                warnings.append("full_page_image_mask_screenshot")
+                inspections.append(PageInspection(
+                    page_index=page_index,
+                    output_name=f"page_{page_index}.png",
+                    extraction_mode="pdf_screenshot",
+                    payload={
+                        **payload,
+                        "decision_reason": "full_page_image_mask_candidates",
+                        "image_mask_candidate_xrefs": [
+                            candidate["xref"]
+                            for candidate in candidates
+                            if candidate.get("is_image_mask")
+                        ],
+                    },
+                    warnings=warnings,
+                ))
+                continue
+
             if same_width_candidates:
                 if len(same_width_candidates) > 1:
                     warnings.append("multiple_full_width_candidates")
@@ -939,21 +1052,14 @@ def inspect_pdf_source(source: SourceRef) -> list[PageInspection]:
                     continue
 
                 if len(same_width_candidates) > 1 and _composite_candidates_share_bboxes(same_width_candidates):
-                    composite_bbox = _union_bboxes([
-                        candidate["bbox"] for candidate in same_width_candidates
-                    ])
-                    composite_source_dpi = _summarize_candidate_group_dpi(same_width_candidates)
+                    warnings.append("composite_full_width_screenshot")
                     inspections.append(PageInspection(
                         page_index=page_index,
                         output_name=f"page_{page_index}.png",
-                        extraction_mode="pdf_composite_full_width",
-                        source_dpi=composite_source_dpi,
-                        source_width_px=None,
-                        source_height_px=None,
+                        extraction_mode="pdf_screenshot",
                         payload={
                             **payload,
                             "decision_reason": "composite_full_width_candidates",
-                            "composite_bbox": composite_bbox,
                             "composite_candidate_xrefs": _ordered_candidate_xrefs(same_width_candidates),
                             "full_width_candidate_xrefs": [
                                 candidate["xref"] for candidate in same_width_candidates
@@ -1024,7 +1130,12 @@ def extract_tiff_page_image(
         else:
             base_image = image.copy()
 
-    return normalize_to_target_dpi(base_image, inspection.source_dpi, config.target_dpi)
+    return normalize_to_target_dpi(
+        base_image,
+        inspection.source_dpi,
+        config.target_dpi,
+        inspection=inspection,
+    )
 
 
 def extract_pdf_page_image(
@@ -1052,6 +1163,7 @@ def extract_pdf_page_image(
                 base_image,
                 inspection.source_dpi,
                 config.target_dpi,
+                inspection=inspection,
             )
         finally:
             base_image.close()
@@ -1075,6 +1187,7 @@ def extract_pdf_page_image(
                 layered_image,
                 source_dpi,
                 config.target_dpi,
+                inspection=inspection,
             )
         finally:
             layered_image.close()
@@ -1107,6 +1220,16 @@ def extract_pdf_page_image(
         with pymupdf.open(str(source.path)) as doc:
             page = doc[page_index]
             pix = render_page_to_target_dpi(page, config.target_dpi)
+            rendered_image = _pixmap_to_pil(pix)
+
+        return rendered_image, 1.0, False
+
+    if inspection.extraction_mode == "pdf_screenshot":
+        page_index = inspection.payload["page_index"]
+
+        with pymupdf.open(str(source.path)) as doc:
+            page = doc[page_index]
+            pix = page.get_pixmap(dpi=config.target_dpi, alpha=True)
             rendered_image = _pixmap_to_pil(pix)
 
         return rendered_image, 1.0, False
@@ -1181,6 +1304,18 @@ def process_source(
                 page_info["warnings"] = inspection.warnings
             if "decision_reason" in inspection.payload:
                 page_info["decision_reason"] = inspection.payload["decision_reason"]
+            if "dpi_correction_applied" in inspection.payload:
+                page_info["dpi_correction_applied"] = inspection.payload["dpi_correction_applied"]
+            if "dpi_correction_reason" in inspection.payload:
+                page_info["dpi_correction_reason"] = inspection.payload["dpi_correction_reason"]
+            if "reported_source_dpi" in inspection.payload:
+                page_info["reported_source_dpi"] = inspection.payload["reported_source_dpi"]
+            if "corrected_source_dpi" in inspection.payload:
+                page_info["corrected_source_dpi"] = inspection.payload["corrected_source_dpi"]
+            if "estimated_output_height_px" in inspection.payload:
+                page_info["estimated_output_height_px"] = inspection.payload["estimated_output_height_px"]
+            if "expected_output_height_px" in inspection.payload:
+                page_info["expected_output_height_px"] = inspection.payload["expected_output_height_px"]
             if "selected_xref" in inspection.payload:
                 page_info["selected_xref"] = inspection.payload["selected_xref"]
             if "full_width_candidate_xrefs" in inspection.payload:
