@@ -185,6 +185,13 @@ def _shorten_printer_names(
             out.append(short_names[n])
         elif mode == "last_word" and n:
             out.append(n.split()[-1])
+        elif mode == "sf_ll":
+            # First letter of first name, followed by last name
+            parts = n.split()
+            if len(parts) >= 2:
+                out.append(f"{parts[0][0]}. {parts[-1]}")
+            else:
+                out.append(n)
         else:
             out.append(n)
     return np.array(out)
