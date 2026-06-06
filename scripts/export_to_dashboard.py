@@ -5,8 +5,10 @@ Reads the outputs of the typography pipeline (``acontrario_results.npz``,
 ``distances_*.npz``, per-document ``clusters_all.npz``) and produces all the
 data files that sueltas-app expects:
 
+  • ``n1hat_combined_matrix_ordered.npy``  — Combined n̂₁ matrix (OLO-reordered)
   • ``n1hat_rm_matrix_ordered.npy``  — Roman n̂₁ matrix (OLO-reordered)
   • ``n1hat_it_matrix_ordered.npy``  — Italic n̂₁ matrix (OLO-reordered)
+  • ``w_combined_matrix_ordered.npy``  — Combined weight matrix (OLO-reordered)
   • ``w_rm_matrix_ordered.npy``      — Roman weight matrix (OLO-reordered)
   • ``w_it_matrix_ordered.npy``      — Italic weight matrix (OLO-reordered)
   • ``books_dashboard_ordered.npy``  — Book IDs in display order
@@ -303,6 +305,14 @@ def export(
                 _reorder_matrix(w_it, order).astype(np.float32))
         print(f"  Saved n1hat_it_matrix_ordered.npy ({n_books}×{n_books})")
         print(f"  Saved w_it_matrix_ordered.npy")
+        
+    if n1hat_rm is not None and n1hat_it is not None:
+        n1hat_combined = (n1hat_rm + n1hat_it)
+        w_combined = (w_rm + w_it) / 2
+        np.save(str(out_dir / "n1hat_combined_matrix_ordered.npy"),
+                _reorder_matrix(n1hat_combined, order).astype(np.float32))
+        np.save(str(out_dir / "w_combined_matrix_ordered.npy"),
+                _reorder_matrix(w_combined, order).astype(np.float32))
 
     # Ordered book IDs and printer names
     np.save(str(out_dir / "books_dashboard_ordered.npy"), books[order])
