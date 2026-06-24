@@ -2,6 +2,10 @@ import numpy as np
 import skimage as ski
 from skimage.graph import route_through_array
 import cv2
+import matplotlib.pyplot as plt
+from skimage.segmentation import watershed
+from skimage import measure
+
 
 
 # ---------------------------------------------------------------------------
@@ -614,14 +618,535 @@ def char_segment_logit_init(img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad
     return char_data
 
 
+
+# ---------------------------------------------------------------------------
+# kraken_init segmentation (Kraken path — uses Kraken-logit-derived boxes)
+# ---------------------------------------------------------------------------
+
+def extend_baseline(baseline: np.ndarray, new_x1: int, new_x2: int) -> np.ndarray:
+    """
+    Extend a 2-point baseline to new X coordinates.
+    
+    Args:
+        baseline: Array of shape (2, 2) representing [[x1, y1], [x2, y2]]
+        new_x1: Target left X coordinate
+        new_x2: Target right X coordinate
+        
+    Returns:
+        Array of shape (2, 2) with the extended baseline points
+    """
+    xs = baseline[:, 0]
+    ys = baseline[:, 1]
+    
+    # np.interp handles extrapolation automatically when given values
+    # outside the original xs range
+    new_ys = np.interp([new_x1, new_x2], xs, ys).astype(int)
+    
+    return np.array([[new_x1, new_ys[0]], 
+                     [new_x2, new_ys[1]]])
+
+
+def find_hor_paths_kraken_init(
+    img: np.ndarray,
+    tblrs: np.ndarray,
+    boundary: np.ndarray,
+    baseline: np.ndarray,
+    top_pad: float = 1,
+    bottom_pad: float = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Find top/bottom text-line edges using kraken baseline + multi-path routing.
+
+    Args:
+        img: Grayscale text image, shape (h, w) and values in [0, 1].
+        tblrs: Character boxes, shape (n, 4), integer.
+        boundary: Kraken boundary, shape (L, 2), integer.
+        baseline: Kraken baseline, shape (2, 2), integer.
+        top_pad: Vertical padding above text (pixels).
+        bottom_pad: Vertical padding below text (pixels).
+
+    Returns:
+        Top and bottom paths as arrays of (y, x) points.
+    """
+    h, w = img.shape
+
+    len_c = int(w / len(tblrs))
+    len_c += len_c % 2 + 1
+
+    # extend bounndary to image width
+    bx_min, bx_max = boundary[:, 0].min(), boundary[:, 0].max()
+    ex_boundary = boundary.copy()
+    ex_boundary[:, 0] = (ex_boundary[:, 0] - bx_min) * (w - 1) / (bx_max - bx_min)
+
+    # extend baseline to image width
+    ex_baseline = extend_baseline(baseline, 0, w)
+
+    # blur original boundary
+    blur = np.zeros(img.shape, dtype=np.float32)
+    blur = cv2.polylines(blur, [ex_boundary], isClosed=True, color=1, thickness=1)
+    blur = cv2.GaussianBlur(
+        blur, (len_c*2 + 1, len_c*2 + 1), 0,
+        borderType=cv2.BORDER_REFLECT,
+    )
+    # invert so minimum cost is given to original boundary
+    blur = blur.max() - blur
+    # add img so that the cost is not only based on original boundary
+    blur+= cv2.GaussianBlur(1 - img, (len_c, 3), 0, borderType=cv2.BORDER_REPLICATE)
+
+    # normalize 
+    cost_img = (blur.copy() - blur.min()) / (blur.max() - blur.min() + 1e-12)
+
+    # add basline as no-crossing barrier
+    baseline = cv2.line(np.zeros_like(cost_img), tuple(ex_baseline[0]), tuple(ex_baseline[1]), color=1e3, thickness=2)
+    # Convert to a boolean mask (True where the line is drawn)
+    baseline_mask = baseline > 0 
+
+    # add baseline barrier
+    cost_img[baseline_mask] = np.inf
+    
+    costs = []
+    paths = []
+
+    for y_start in range(top_pad // 2, h - (bottom_pad // 2)):
+        # skip paths that start or end in baselie
+        if baseline_mask[y_start, 0] or baseline_mask[y_start, w - 1]:
+            continue
+        try:
+            path, cost = route_through_array(
+                cost_img, [y_start, 0], [y_start, w - 1],
+                fully_connected=True, geometric=False,
+            )
+            path = np.array(path)
+            # If ANY point in the path lands on a True pixel in the mask, skip to the next y_start
+            if baseline_mask[path[:, 0], path[:, 1]].any():
+                continue
+            paths.append(path)
+            costs.append(cost * (1 - cost_img[path[:, 0], path[:, 1]]).min())
+        except ValueError:
+            continue
+
+
+
+    # Build density after filtering
+    path_img = np.zeros_like(img, dtype=int)
+    for path in paths:
+        path_img[*(path.T)] += 1
+
+
+    if len(paths) == 0:
+        default_top = np.column_stack([np.full(w, top_pad), np.arange(w)])
+        default_bot = np.column_stack([np.full(w, h - bottom_pad - 1), np.arange(w)])
+        return default_top, default_bot
+
+    # Normalize costs by mean path density
+    cost_agg = np.array(costs)
+    for i, path in enumerate(paths):
+        cost_agg[i] /= path_img[path[:, 0], path[:, 1]].mean()
+
+    clas = np.array([path[0, 0] > ex_baseline[0][1] for path in paths])
+
+    has_top = np.any(clas == 0)
+    has_bottom = np.any(clas == 1)
+    if not has_top or not has_bottom:
+        default_top = np.column_stack([np.full(w, top_pad), np.arange(w)])
+        default_bot = np.column_stack([np.full(w, h - bottom_pad - 1), np.arange(w)])
+        return default_top, default_bot
+
+    c1_s = np.argmin(clas == 0)
+    p1 = np.argmin(cost_agg[clas == 0])
+    p2 = np.argmin(cost_agg[clas == 1]) + c1_s
+
+    return np.array(paths[p1]), np.array(paths[p2])
+
+def get_connected_components(crop_gray_norm, tb_mask):
+    """Computes the connected components. This only needs to be run ONCE."""
+    thld, thldd = cv2.threshold((crop_gray_norm*255).astype(np.uint8), 0, 255, 
+                         cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    thldd = crop_gray_norm < ((thld/255.) ** (3/4))
+    
+    label_img = measure.label(thldd * tb_mask, connectivity=1)
+    
+    cc_areas = np.bincount(label_img.ravel())
+    
+    return label_img, thld/255., cc_areas
+
+def assign_ccs_to_tblrs(label_img, tblrs, chars_labels, threshold=0.75):
+    """Assigns CCs to the provided bounding boxes based on area overlap."""
+    h, w = label_img.shape
+    num_tblrs = len(tblrs)
+    
+    # Create the map of current TBLRs
+    tblr_map = np.zeros((h, w), dtype=np.uint8)
+    for i, tblr in enumerate(tblrs):
+        if chars_labels[i] == ' ':
+            continue
+        t, b, l, r = tblr
+        cv2.rectangle(tblr_map, (int(l), int(t)), (int(r), int(b)), color=i+1, thickness=-1)
+        
+    max_cc_label = label_img.max()
+    if max_cc_label == 0:
+        return np.zeros_like(label_img, dtype=int), tblr_map
+        
+    # Compute intersections using bincount
+    combined_ids = tblr_map.astype(np.int32) * (max_cc_label + 1) + label_img.astype(np.int32)
+    counts = np.bincount(combined_ids.ravel(), minlength=(num_tblrs + 1) * (max_cc_label + 1))
+    intersection_matrix = counts.reshape(num_tblrs + 1, max_cc_label + 1)
+    
+    cc_total_areas = np.bincount((label_img * (tblr_map!=0)).ravel(), minlength=max_cc_label + 1)
+    ratio_matrix = intersection_matrix / (cc_total_areas + 1e-6)
+    
+    # Assign CCs
+    aux_labels = np.zeros_like(label_img, dtype=int)
+    for t in range(1, num_tblrs + 1):
+        valid_ccs = np.where(ratio_matrix[t, 1:] > threshold)[0] + 1 
+        for cc_id in valid_ccs:
+            aux_labels[label_img == cc_id] = t
+            
+    return aux_labels, tblr_map
+
+def adjust_tblrs(tblrs, aux_labels):
+    """Adjusts the left/right borders of the TBLRs based on assigned CCs and neighbors."""
+    num_tblrs = len(tblrs)
+    adjusted_tblrs = tblrs.copy()
+    
+    ys, xs = np.where(aux_labels > 0)
+    labels = aux_labels[ys, xs]
+    
+    min_x = np.full(num_tblrs + 1, np.inf)
+    max_x = np.full(num_tblrs + 1, -np.inf)
+    
+    # Safety check: only calculate extremes if there are actually assigned pixels
+    if len(labels) > 0:
+        np.minimum.at(min_x, labels, xs)
+        np.maximum.at(max_x, labels, xs)
+    
+    for t in range(1, num_tblrs + 1):
+        if min_x[t] != np.inf:
+            orig_l = tblrs[t-1, 2]
+            orig_r = tblrs[t-1, 3]
+            
+            cc_left = min_x[t]
+            cc_right = max_x[t]
+
+            # Calculate new Left border
+            if (t-1 >= 0) and max_x[t-1] != -np.inf:
+                # find mean of current left and previous right
+                new_l = (max_x[t-1] + min_x[t]) // 2
+                diff_l = (new_l - orig_l) // 3
+            else:
+                # find mean of current left and assigned CC left
+                new_l = (orig_l + int(cc_left)) // 2
+                diff_l = (new_l - orig_l) // 2
+                
+            # Calculate new Right border
+            if (t+1 < num_tblrs + 1) and min_x[t+1] != np.inf:
+                new_r = (min_x[t+1] + max_x[t]) // 2
+                diff_r = (new_r - orig_r) // 3
+            else:
+                new_r = (orig_r + int(cc_right)) // 2
+                diff_r = (new_r - orig_r) // 2
+            
+            # Apply to current box
+            adjusted_tblrs[t-1, 2] = orig_l + diff_l
+            adjusted_tblrs[t-1, 3] = orig_r + diff_r
+            
+            # Apply to neighbors to ensure contiguous borders
+            if t-2 >= 0:
+                adjusted_tblrs[t-2, 3] = tblrs[t-2, 3] + diff_l
+            if t < num_tblrs:
+                adjusted_tblrs[t, 2] = tblrs[t, 2] + diff_r
+                
+    return adjusted_tblrs
+
+def visualize_results(tblrs, aux_labels, chars_labels, shape, title="Assigned CCs"):
+    """Helper function to visualize the current state."""
+    h, w = shape
+    col_labels = np.zeros((h, w, 3), dtype=np.uint8)
+    num_tblrs = len(tblrs)
+    
+    for t in range(1, num_tblrs + 1):
+        t_coord, b_coord, l_coord, r_coord = tblrs[t-1]
+        col_labels = cv2.rectangle(col_labels, (int(l_coord), int(t_coord)), (int(r_coord), int(b_coord)), color=(255, 255, 255), thickness=1)
+        
+        if chars_labels and t-1 < len(chars_labels):
+            col_labels = cv2.putText(col_labels, str(chars_labels[t-1]), (int(l_coord), int(t_coord)-2), 
+                                     cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+        
+        mask = aux_labels == t
+        color = np.random.randint(0, 255, size=3).tolist()
+        col_labels[mask] = color
+
+    plt.figure(figsize=[20,6])
+    plt.imshow(col_labels)
+    plt.title(title)
+    plt.show()
+
+
+def resolve_divided_ccs(orig_img, label_img, aux_labels, tblrs, chars_labels, thld_iters=1, thld=0.5):
+    """
+    For CCs that span multiple TBLRs (divided), cut higher level-sets to find seeds,
+    use watershed to properly split them, and assign pieces to TBLRs.
+    Only processes the ROI of each divided CC for efficiency.
+    
+    Returns updated (label_img, aux_labels) so split pieces become 
+    independent CCs for future iterations.
+    """
+    h, w = label_img.shape
+    new_aux_labels = aux_labels.copy()
+    new_label_img = label_img.copy()
+    num_tblrs = len(tblrs)
+    
+    # --- Precompute a full-image TBLR map for fast lookups ---
+    tblr_map = np.zeros((h, w), dtype=np.uint16)
+    for t in range(num_tblrs):
+        if chars_labels[t] == ' ':
+            continue
+        t_coord, b_coord, l_coord, r_coord = tblrs[t]
+        cv2.rectangle(tblr_map, (int(l_coord), int(t_coord)), 
+                      (int(r_coord), int(b_coord)), color=t+1, thickness=-1)
+    
+    # --- Find mean size and std dev of assigned CCs ---
+    assigned_mask = (label_img > 0) & (aux_labels > 0)
+    assigned_tblrs = aux_labels[assigned_mask]
+    tblr_pixel_counts = np.bincount(assigned_tblrs, minlength=num_tblrs + 1)
+
+    assigned_cc_sizes = []
+    for t in range(num_tblrs):
+        if chars_labels[t] != ' ' and t + 1 < len(tblr_pixel_counts):
+            size = tblr_pixel_counts[t + 1]
+            if size > 0:
+                assigned_cc_sizes.append(size)
+    
+    if assigned_cc_sizes:
+        mean_size = np.mean(assigned_cc_sizes)
+        std_dev = np.std(assigned_cc_sizes)
+    else:
+        mean_size = 0
+        std_dev = 0
+
+    # --- Find unassigned CCs (exist in label_img but not in aux_labels) ---
+    unassigned_mask = (label_img > 0) & (aux_labels == 0)
+    if not unassigned_mask.any():
+        return new_label_img, new_aux_labels
+    
+    unassigned_cc_ids = np.unique(label_img[unassigned_mask])
+    next_label = new_label_img.max() + 1
+    
+    for cc_id in unassigned_cc_ids:
+        cc_mask = (new_label_img == cc_id)
+        ys, xs = np.where(cc_mask)
+        
+        if len(ys) == 0:
+            continue
+        
+        # --- QUICK FILTER: Is this CC actually divided across TBLRs? ---
+        cc_tblrs = tblr_map[ys, xs]
+        unique_tblrs = np.unique(cc_tblrs)
+        unique_tblrs = unique_tblrs[unique_tblrs > 0]  # Remove background (0)
+        
+        if len(unique_tblrs) < 2:
+            # Not divided. If it touches one TBLR, assign it there.
+            if len(unique_tblrs) == 1:
+                new_aux_labels[ys, xs] = unique_tblrs[0]
+                new_label_img[ys, xs] = next_label
+                next_label += 1
+            continue
+        
+        # ============================================================
+        # THIS CC IS DIVIDED — run level_cut + watershed on its ROI
+        # ============================================================
+        pad = 3
+        min_y = max(0, ys.min() - pad)
+        max_y = min(h, ys.max() + pad + 1)
+        min_x = max(0, xs.min() - pad)
+        max_x = min(w, xs.max() + pad + 1)
+        
+        roi = orig_img[min_y:max_y, min_x:max_x]
+        roi_mask = cc_mask[min_y:max_y, min_x:max_x].astype(np.uint8)
+        roi_tblr_map = tblr_map[min_y:max_y, min_x:max_x]
+        
+        # 1. Threshold at higher level to separate touching pieces → these become seeds
+        thlded = (roi < (thld**(thld_iters)) ) * roi_mask 
+        seeds = measure.label(thlded, connectivity=1)
+        num_seeds = seeds.max()
+        seed_areas = np.bincount(seeds.ravel())
+        
+        # --- FILTER SEEDS BASED ON SIZE ---
+        valid_seed_ids = []
+        invalid_seed_ids = []
+        for seed_id in range(1, num_seeds + 1):
+            area = seed_areas[seed_id]
+            if mean_size * 0.1 <= area <= mean_size * 1.75:
+                valid_seed_ids.append(seed_id)
+            else:
+                invalid_seed_ids.append(seed_id)
+
+        
+        # If erosion produced seeds but NONE passed the size filter, fallback
+        if (len(valid_seed_ids) < 1) or (num_seeds < 2):
+            continue
+            
+        # Put all non valid seeds to single value (so watershed grows invalid as a single piece)
+        filtered_seeds =np.zeros_like(seeds)
+        for seed_id in range(1, num_seeds + 1):
+            if seed_id in valid_seed_ids:
+                filtered_seeds[seeds == seed_id] = seed_id
+            else:
+                filtered_seeds[seeds == seed_id] = num_seeds + 2
+        
+
+        # 2. Watershed on the ROI only (super fast!)
+        # Because we passed filtered_seeds, watershed will ONLY grow from valid seeds
+        distance = orig_img[min_y:max_y, min_x:max_x].astype(np.float32)
+        ws_labels = watershed(distance, markers=filtered_seeds, mask=roi_mask)
+        
+
+        # filter only good sized watershed pieces
+        ws_areas = np.bincount(ws_labels.ravel())
+        valid_ws_ids = []
+        for ws_id in range(1, ws_labels.max() + 1):
+            if ws_id == num_seeds + 2:
+                continue
+            area = ws_areas[ws_id]
+            if mean_size * 0.33 <= area <= mean_size * 1.75:
+                valid_ws_ids.append(ws_id)
+            
+        
+        # 3. Assign each watershed piece to the TBLR with most overlap
+        # We only iterate over the valid IDs
+        for piece_id in valid_ws_ids:
+            piece_mask = (ws_labels == piece_id)
+            if not piece_mask.any():
+                continue
+            
+
+            piece_tblrs = roi_tblr_map[piece_mask]
+            if len(piece_tblrs) == 0:
+                continue
+            
+            counts = np.bincount(piece_tblrs)
+            if len(counts) > 1:
+                counts[0] = 0  # ignore background
+            best_tblr = np.argmax(counts)
+            
+            piece_ys, piece_xs = np.where(piece_mask)
+            full_ys = piece_ys + min_y
+            full_xs = piece_xs + min_x
+            
+            if best_tblr > 0:
+                # new_aux_labels[full_ys, full_xs] = best_tblr
+                new_label_img[full_ys, full_xs] = next_label  # New unique CC ID!
+                next_label += 1
+            else:
+                # Piece is outside all TBLRs → remove from label_img 
+                # so it doesn't get reprocessed in future iterations
+                new_label_img[full_ys, full_xs] = 0
+    
+    return new_label_img, aux_labels
+
+def char_segment_kraken_init(img_c, tblrs, chars_labels, len_no_sp, top_pad, bottom_pad,
+                            img_flat=None, boundary=None, baseline=None):
+    """Character segmentation using logit-initialised boxes (Kraken path).
+
+    Same contract as :func:`char_segment` but uses
+    :func:`find_hor_paths_kraken_init` / :func:`find_vert_paths_kraken_init`
+    and includes proximity-path boundary negotiation.
+
+    Args:
+        img_c: Grayscale image, shape (h, w), values in [0, 1].
+            Used for path finding (horizontal + vertical cost paths).
+        tblrs: Character boxes, shape (n, 4).
+        chars_labels: List of character labels, shape (n,).
+        len_no_sp: Number of non-space characters.
+        top_pad: Top padding size (pixels).
+        bottom_pad: Bottom padding size (pixels).
+        widths: Per-character widths array.
+        img_flat: Optional bg-flattened image, shape (h, w), values in
+            [0, 1].  When provided, mask filtering (white-pixel removal)
+            uses this image instead of *img_c*.  This lets path finding
+            exploit full grayscale contrast while masks are cleaned
+            against the flattened background.
+        boundary: Kraken boundary, shape (L, 2), integer.
+        baseline: Kraken baseline, shape (2, 2), integer.
+
+    Returns:
+        char_data: list of ((t, b, l, r), mask) tuples.
+    """
+    if img_flat is None:
+        img_flat = img_c
+    tblrs = np.array(tblrs)
+    char_data = []
+    tpath, bpath = find_hor_paths_kraken_init(img_c, tblrs, boundary, baseline, top_pad, bottom_pad)
+    tb_mask = cv2.fillPoly(np.zeros_like(img_c),[np.concatenate((tpath, bpath[::-1]))[:, ::-1]], 1)
+
+    # 1. Precompute Connected Components (Run this ONLY ONCE)
+    label_img_orig, thld, cc_areas = get_connected_components(img_c, tb_mask)
+    cc_ids = np.argsort(cc_areas)[::-1]
+    label_img = np.isin(label_img_orig, cc_ids[:len_no_sp//2]).astype(np.uint8) * label_img_orig
+
+    # 2. Initialize with your original bounding boxes
+    current_tblrs = tblrs.copy()
+
+    # 3. Iterate!
+    num_iterations = 15  # Change this to however many passes you want
+
+    delay = 0
+    for i in range(num_iterations):        
+        # Step A: Assign CCs based on the CURRENT bounding boxes
+        aux_labels, tblr_map = assign_ccs_to_tblrs(label_img, current_tblrs, chars_labels, threshold=0.8 - (i * 0.05))
+                
+        # Step B: Adjust the bounding boxes based on the assignments
+        current_tblrs = adjust_tblrs(current_tblrs, aux_labels)
+        
+        # Step D: Try to separate CCs by eroding the mask
+        # label_img = cv2.erode((label_img>0).astype(np.uint8), np.ones((2, 2), np.uint8), iterations=1) * label_img
+        label_old = label_img.copy()
+        label_img, aux_labels = resolve_divided_ccs(
+            img_c, label_img, aux_labels, current_tblrs, chars_labels, thld_iters=(i+4)/ 4, thld=thld
+        )
+
+        if (label_old == label_img).all():
+            if delay == 2:
+                break
+            else: 
+                delay+= 1
+        else:
+            delay = 0
+        # add some of the components back to the label_img that were removed in cc_ids
+        new_adds = (np.isin(label_img_orig, cc_ids[(len_no_sp//2)+((len_no_sp//3)*i): (len_no_sp//2)+((len_no_sp//3)*(i+1))]).astype(np.uint8) * label_img_orig)
+        new_uq = np.unique(new_adds[new_adds!=0])
+        for k, uq in enumerate(new_uq):
+            label_img[new_adds == uq] = label_img.max() + k + 1
+        
+    
+    ws = watershed(img_flat, aux_labels, mask=(img_flat !=1)*tb_mask)
+    for t in range(len(tblrs)):
+        mask = ws == (t + 1)
+        if not mask.any():
+            # TO DO: Do something with this, we should signal which bboxes are unusual and which neighbour took the cc.
+            char_data.append(None)
+            continue
+        hprojs, = np.nonzero(np.any(mask, axis=1))
+        vprojs, = np.nonzero(np.any(mask, axis=0))
+        t_coord, b_coord = np.min(hprojs), np.max(hprojs) + 1
+        l_coord, r_coord = np.min(vprojs), np.max(vprojs) + 1
+        mask = mask[t_coord:b_coord, l_coord:r_coord]
+        char_data.append(((t_coord, b_coord, l_coord, r_coord), mask.astype(bool)))
+
+    return char_data, tpath, bpath
+
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
-def segment_characters(img_c, tblrs, box_clu, refwidth, *,
+def segment_characters(img_c, tblrs, box_clu=None, refwidth=None, *,
                        mode="box_init",
                        top_pad=1, bottom_pad=1, widths=None,
-                       img_flat=None):
+                       img_flat=None, boundary=None, baseline=None,
+                       chars_labels=None, len_no_sp=None
+                       ):
     """Unified entry point for character segmentation.
 
     Args:
@@ -631,12 +1156,17 @@ def segment_characters(img_c, tblrs, box_clu, refwidth, *,
         box_clu: Line cluster assignments, shape (n,).
         refwidth: Mean character width (float).
         mode: ``"box_init"`` (detector-box-based, original) or
-              ``"logit_init"`` (CRNN-logit-based, DocTR variant).
+              ``"logit_init"`` (CRNN-logit-based, DocTR variant) or
+              ``"kraken_init"`` (Kraken-logit-based, Kraken variant).
         top_pad: Top padding (only used by ``logit_init``).
         bottom_pad: Bottom padding (only used by ``logit_init``).
         widths: Per-character widths (only used by ``logit_init``).
         img_flat: Optional bg-flattened image for mask filtering
             (only used by ``logit_init``).
+        boundary: Optional boundary for mask filtering
+            (only used by ``kraken_init``).
+        baseline: Optional baseline for mask filtering
+            (only used by ``kraken_init``).
 
     Returns:
         For ``box_init``: (char_data, idxs_input) — list of ((t,b,l,r), mask)
@@ -651,6 +1181,13 @@ def segment_characters(img_c, tblrs, box_clu, refwidth, *,
             img_c, tblrs, box_clu, refwidth, top_pad, bottom_pad, widths,
             img_flat=img_flat,
         )
+    elif mode == "kraken_init":
+        return char_segment_kraken_init(
+            img_c, tblrs, chars_labels, len_no_sp, top_pad, bottom_pad,
+            img_flat=img_flat,
+            boundary=boundary,
+            baseline=baseline
+        )
     else:
         raise ValueError(f"Unknown segmentation mode: {mode!r}. "
-                         f"Expected 'box_init' or 'logit_init'.")
+                         f"Expected 'box_init' or 'logit_init' or 'kraken_init'.")
